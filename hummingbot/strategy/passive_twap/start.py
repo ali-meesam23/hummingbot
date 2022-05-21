@@ -1,0 +1,2 @@
+from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
+
