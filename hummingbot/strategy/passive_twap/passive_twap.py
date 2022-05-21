@@ -3,31 +3,41 @@ import logging
 from decimal import Decimal
 from typing import (
     List,
-    Optional
+    Dict,
+    Optional,
+    # Tuple
 )
 
 
-
+# MARKET DATA
 from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
+# CONNECTOR
+from hummingbot.connector.exchange_base import ExchangeBase
+
+# CORE - DATA_TYPE
+from hummingbot.core.data_type.limit_order import LimitOrder
+# from hummingbot.core.data_type.order_book import OrderBook
+from hummingbot.core.data_type.common import OrderType, TradeType
 
 # MAIN STRATEGY CLASS
 from hummingbot.strategy.strategy_py_base import StrategyPyBase
+
 # LOGGER
 from hummingbot.logger import HummingbotLogger
+# PERFORMANCE METRICS
+from hummingbot.client.performance import PerformanceMetrics
 
 # INIT Logger variable
-twap_logger = None
-
+hws_logger = None
 
 class PassiveTWAP(StrategyPyBase):
 
-    # LOGGING
     @classmethod
-    def logger(cls) -> HummingbotLogger:
-        global twap_logger
-        if twap_logger is None:
-            twap_logger = logging.getLogger(__name__)
-        return twap_logger
+    def logger(cls)->HummingbotLogger:
+        global hws_logger
+        if hws_logger is None:
+            hws_logger = logging.getLogger(__name__)
+        return hws_logger
 
     def __init__(
         self,
@@ -39,7 +49,7 @@ class PassiveTWAP(StrategyPyBase):
         MAX_SPREAD:Decimal,
         cancel_order_wait_time: Optional[float] = 60.0,
         status_report_interval:float=900.0
-        ):
+        )->None:
         """
         :param market_infos: list of market trading pairs
         :param is_buy: if the order is to buy
@@ -90,9 +100,10 @@ class PassiveTWAP(StrategyPyBase):
         self._quantity_remaining = target_asset_amount
         self._MAX_SPREAD = MAX_SPREAD
         # Remaining Balance Per Bin
-        self._balance_per_bin = self._quantity_remaining/(GNT-self._remaining_bins)
+        self._order_size = self._quantity_remaining/(GNT-self._remaining_bins)
         # CURRENT SPREAD
         self._current_spread = MAX_SPREAD - (self._bin_remaining_time/2)
+
         # CANCEL ORDER RATE  = SPREAD REFRESH RATE
         #       DEFAULT REFRESH RATE => 10 SECONDS
         if cancel_order_wait_time<Decimal("10"):
@@ -107,6 +118,53 @@ class PassiveTWAP(StrategyPyBase):
         self.add_markets(list(all_markets))
 
 
+    @property
+    def market_info_to_active_orders(self) -> Dict[MarketTradingPairTuple, List[LimitOrder]]:
+        return self.order_tracker.active_limit_orders
+
+    @property
+    def get_order_prices(self):
+        """
+        Get Order prices for each trading pair on the exchange
+        return >> {exch:{pair:value,...},...}
+        """
+        curr_spread = -1*self._current_spread if self._is_buy else self._current_spread
+        prices = {}
+        for market_info in self._market_infos.values():
+            pair = market_info.trading_pair
+            if pair not in prices:
+                prices[pair] = Decimal(market_info.get_mid_price()+curr_spread)
+        return prices
         
-        
+
+    def filled_trades(self):
+        """Returns a list of all filled trades generated from limit orders with the same 
+        trade_type (buy/sell) the strategy has in its config
+        !!!NOTE: self.trades is no where in the code other than this function!!!"""
+        trade_type = TradeType.BUY if self._is_buy else TradeType.SELL
+        return [
+            trade for trade in self.trades
+            if trade.trade_type == trade_type.name and trade.order_type == OrderType.LIMIT
+        ]
+    
+    # ======================= STATUS =======================
+    def configuration_status_lines(self,):
+        lines = ["", "  Configuration:"]
+
+        for market_info in self._market_infos.values():
+
+            lines.append("    "
+                         f"Remaining amount: {PerformanceMetrics.smart_round(self._quantity_remaining)} "
+                         f"{market_info.quote}    "
+                         f"Order price: {PerformanceMetrics.smart_round(self.get_order_prices[market_info.trading_pair])} "
+                         f"{market_info.quote_asset}    "
+                         f"Order size: {PerformanceMetrics.smart_round(self._order_size)} "
+                         f"{market_info.base_asset}")
+
+        lines.append(f"    Execution type: {self._execution_state}")
+
+        return lines
+
+
+    # =======================================================
     
