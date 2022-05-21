@@ -74,15 +74,39 @@ class PassiveTWAP(StrategyPyBase):
         self._execution_state = True
         
         self._is_buy = is_buy
-        self._quantity_remaining = target_asset_amount
+        ########## TIME COUNTERS
+        # TOTAL DURATION >> USE AS REMAINING TIME FOR THE REST OF THE CODE
         self._remaining_time = TTC # Total Time/Duration
+        # TOTAL BINS
         self._remaining_bins = GNT # Total Bins
+        # TOTAL TIME PER BIN
         self._time_per_bin = TTC/GNT
+        # REMAINING ALGO TIME
         self._bin_remaining_time = self._time_per_bin
-        # SPREAD
-        self._current_stread = MAX_SPREAD
-        
+
+
+        ########## AMOUNTS
+
+        self._quantity_remaining = target_asset_amount
+        self._MAX_SPREAD = MAX_SPREAD
+        # Remaining Balance Per Bin
+        self._balance_per_bin = self._quantity_remaining/(GNT-self._remaining_bins)
+        # CURRENT SPREAD
+        self._current_spread = MAX_SPREAD - (self._bin_remaining_time/2)
+        # CANCEL ORDER RATE  = SPREAD REFRESH RATE
+        #       DEFAULT REFRESH RATE => 10 SECONDS
+        if cancel_order_wait_time<Decimal("10"):
+            self._cancel_order_wait_time = Decimal('10')
+        else:
+            self._cancel_order_wait_time = cancel_order_wait_time
+        # Reporting Interval for Any Errors
         self._status_report_interval = status_report_interval
 
+
+        all_markets = set([market_info.market for market_info in market_infos])
+        self.add_markets(list(all_markets))
+
+
+        
         
     

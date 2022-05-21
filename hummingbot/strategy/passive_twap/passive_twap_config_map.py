@@ -20,13 +20,13 @@ def market_prompt():
     return f"{connector} >> Trading Pair: "
 
 def target_base_amount_prompt():
-    'token amount'
+    """'token amount'"""
     trading_pair = passive_twap_config_map.get("trading_pair").value
     base_token, _ = trading_pair.split("-")
     return f"What is the total amount of {base_token} to be traded? (Default is 1.0) >>> "
 
 def target_quote_amount_prompt():
-    'token amount'
+    """'token amount'"""
     trading_pair = passive_twap_config_map.get("trading_pair").value
     _, quote_token = trading_pair.split("-")
     return f"What is the total amount of {quote_token} to be traded? (Default is 10) >>> "
