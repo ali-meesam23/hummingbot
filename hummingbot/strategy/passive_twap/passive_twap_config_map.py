@@ -38,6 +38,13 @@ def validate_algo_duration(value:str=None):
     if result:
         return result
 
+def validate_spread(value:str=None):
+    """Invalidates non-decimal input and check if duration is greater than 0"""
+    result = validate_decimal(value,min_value=Decimal("0"),inclusive=False)
+    if result:
+        return result
+
+
 
 passive_twap_config_map = {
     "strategy":
@@ -87,6 +94,14 @@ passive_twap_config_map = {
         default=60.0,
         type_str="decimal",
         validator=validate_algo_duration,
+        prompt_on_new=True),
+    "MAX_SPREAD":ConfigVar(
+        key="MAX_SPREAD",
+        prompt="Maximum Spread To Place First Order in Each Interval? "
+                ">>> ",
+        default=30.0,
+        type_str="decimal",
+        validator=validate_spread,
         prompt_on_new=True),
     # "cancel_order_wait_time":ConfigVar(
     #     key="cancel_order_wait_time",
