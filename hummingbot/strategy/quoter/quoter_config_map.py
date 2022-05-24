@@ -16,8 +16,8 @@ def str2bool(value: str):
 
 ############ PROMPTS ############
 def market_prompt():
-    connector = quoter_config_map.get('connector').value
-    return f"{connector} >> Trading Pair: "
+    # connector = quoter_config_map.get('connector').value
+    return f"Trading Pair: "
 
 def target_asset_amount_prompt():
     """'token amount'"""

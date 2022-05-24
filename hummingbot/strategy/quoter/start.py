@@ -2,16 +2,6 @@ from hummingbot.strategy.quoter.quoter import Quoter
 from hummingbot.strategy.quoter.quoter_config_map import  quoter_config_map as c_map
 from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
 
-<<<<<<< HEAD:hummingbot/strategy/twap_v0/start.py
-# STRATEGY
-from hummingbot.strategy.twap_v0 import (
-    TWAP_V0
-)
-# CONFIGURATION
-from hummingbot.strategy.passive_twap.passive_twap_config_map import passive_twap_config_map
-
-=======
->>>>>>> feat/script_strategy:hummingbot/strategy/quoter/start.py
 
 def start(self):
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

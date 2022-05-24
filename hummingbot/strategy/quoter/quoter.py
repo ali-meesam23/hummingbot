@@ -4,18 +4,22 @@
 import logging
 import statistics
 from decimal import Decimal
-from typing import Optional, List, Dict
-
+from typing import Optional, List, Dict, Tuple
+# CONNECTOR
+from hummingbot.connector.exchange_base import ExchangeBase
+from hummingbot.core.clock import Clock
 # MARKET DATA
 from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
 # CORE - DATA_TYPE
 from hummingbot.core.data_type.limit_order import LimitOrder
 from hummingbot.core.data_type.common import OrderType, TradeType
+# QUOTER OOP
+from hummingbot.strategy.quoter.quoter_events import QuoterEvents
+from hummingbot.strategy.quoter.quoter_market import QuoterMarket
+from hummingbot.strategy.quoter.quoter_status import QuoterStatus
 
 # MAIN STRATEGY CLASS
 from hummingbot.strategy.strategy_py_base import StrategyPyBase
-# PERFORMANCE METRICS
-from hummingbot.client.performance import PerformanceMetrics
 # LOGGER
 from hummingbot.logger import HummingbotLogger
 
@@ -23,12 +27,8 @@ from hummingbot.logger import HummingbotLogger
 # INIT Logger variable
 hws_logger = None
 
-<<<<<<< HEAD:hummingbot/strategy/twap_v0/twap_v0.py
-class TWAP_V0(StrategyPyBase):
-=======
-class Quoter(StrategyPyBase):
->>>>>>> feat/script_strategy:hummingbot/strategy/quoter/quoter.py
-
+class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
+    
     # CREATE A LOGGER
     @classmethod
     def logger(cls) -> HummingbotLogger:
@@ -62,37 +62,45 @@ class Quoter(StrategyPyBase):
         super().__init__()
 
         self._market_info = market_info
-        self._connector_ready = False
-        self._order_completed = False
+        self._is_buy = is_buy
+        self._target_asset_amount = target_asset_amount
+        self._TTC = TTC * 60
+        self._GNT = GNT
+        self._MAX_SPREAD = MAX_SPREAD
+
+
         self.add_markets([market_info.market])
         self.quote_balance =self._market_info.quote_asset
         self.base_balance = self._market_info.base_asset
 
-        # CHECKS and INIT Variables
+        self._connector_ready = False
         self._all_markets_ready = False
-        self._place_orders = True
+
         self._first_order = True
+        self._place_orders = True
+        self._order_completed = False
+        self._execution_state = True
+
+        # CHECKS and INIT Variables
         self.time_to_cancel = {}
         self._previous_time_stamp = 0   # TRACKING
         self._last_timestamp = 0         # STARTING POINT
-        self._execution_state = True
         
-        self._is_buy = is_buy
-        ########## TIME COUNTERS
+        ########## COUNTERS
         # TOTAL DURATION >> USE AS REMAINING TIME FOR THE REST OF THE CODE
-        self._remaining_time = TTC*60 # Total Time/Duration seconds
+        self._remaining_time = self._TTC # Total Time/Duration seconds
         # TOTAL BINS
         self._remaining_bins = GNT # Total Bins
         self._current_bin = 0
         # TOTAL TIME PER BIN
         self._time_per_bin = TTC/GNT
+        self._order_delay_time = self._time_per_bin # Once the Order is Executed in the bin
         # REMAINING ALGO TIME
         self._bin_remaining_time = self._time_per_bin
 
         ########## AMOUNTS
-
         self._quantity_remaining = target_asset_amount
-        self._MAX_SPREAD = MAX_SPREAD
+
         # Remaining Balance Per Bin
         self._order_size = self._quantity_remaining/(GNT-self._remaining_bins)
         # CURRENT SPREAD
@@ -108,9 +116,29 @@ class Quoter(StrategyPyBase):
         self._status_report_interval = status_report_interval
 
     @property
-    def market_info_to_active_orders(self) -> Dict[MarketTradingPairTuple, List[LimitOrder]]:
+    def active_bids(self) -> List[Tuple[ExchangeBase, LimitOrder]]:
+        return self.order_tracker.active_bids
+
+    @property
+    def active_asks(self) -> List[Tuple[ExchangeBase, LimitOrder]]:
+        return self.order_tracker.active_asks
+
+    @property
+    def active_limit_orders(self) -> List[Tuple[ExchangeBase, LimitOrder]]:
         return self.order_tracker.active_limit_orders
 
+    @property
+    def in_flight_cancels(self) -> Dict[str, float]:
+        return self.order_tracker.in_flight_cancels
+
+    @property
+    def market_info_to_active_orders(self) -> Dict[MarketTradingPairTuple, List[LimitOrder]]:
+        return self.order_tracker.market_pair_to_active_orders
+
+    @property
+    def place_orders(self):
+        return self._place_orders
+    
     @property
     def get_order_prices(self):
         """
@@ -124,94 +152,7 @@ class Quoter(StrategyPyBase):
         if pair not in prices:
             prices[pair] = Decimal(self._market_info.get_mid_price()+curr_spread)
         return prices
-
-    @property
-    def market_info_to_active_orders(self) -> Dict[MarketTradingPairTuple, List[LimitOrder]]:
-        return self.order_tracker.active_limit_orders
-
-    def filled_trades(self):
-        """Returns a list of all filled trades generated from limit orders with the same 
-        trade_type (buy/sell) the strategy has in its config
-        !!!NOTE: self.trades is no where in the code other than this function!!!"""
-        trade_type = TradeType.BUY if self._is_buy else TradeType.SELL
-        return [
-            trade for trade in self.trades
-            if trade.trade_type == trade_type.name and trade.order_type == OrderType.LIMIT
-        ]
-
-    # ======================= STATUS =======================
-    def configuration_status_lines(self,):
-        lines = ["", "  Configuration:"]
-
-        lines.append("    "
-            f"Remaining amount: {PerformanceMetrics.smart_round(self._quantity_remaining)} "
-            f"{self._market_info.base}    "
-            f"Order price: {PerformanceMetrics.smart_round(self.get_order_prices[self._market_info.trading_pair])} "
-            f"{self._market_info.quote_asset}    "
-            f"Order size: {PerformanceMetrics.smart_round(self._order_size)} "
-            f"{self._market_info.base_asset}")
-
-        lines.append(f"    Execution type: {self._execution_state}")
-
-        return lines
-
-    def format_status(self) -> str:
-        market_info = self._market_info
-        lines: list = []
-        warning_lines: list = []
-
-        lines.extend(self.configuration_status_lines())
-
-
-        active_orders = self.market_info_to_active_orders.get(market_info, [])
-
-        warning_lines.extend(self.network_warning([market_info]))
-
-        markets_df = self.market_status_data_frame([market_info])
-        lines.extend(["", "  Markets:"] + ["    " + line for line in markets_df.to_string().split("\n")])
-
-        assets_df = self.wallet_balance_data_frame([market_info])
-        lines.extend(["", "  Assets:"] + ["    " + line for line in assets_df.to_string().split("\n")])
-
-        # See if there're any open orders.
-        if len(active_orders) > 0:
-            price_provider = None
-            # for market_info in self._market_infos.values():
-            price_provider = market_info
-            if price_provider is not None:
-                df = LimitOrder.to_pandas(active_orders, mid_price=price_provider.get_mid_price())
-                if self._is_buy:
-                    # Descend from the price closest to the mid price
-                    df = df.sort_values(by=['Price'], ascending=False)
-                else:
-                    # Ascend from the price closest to the mid price
-                    df = df.sort_values(by=['Price'], ascending=True)
-                df = df.reset_index(drop=True)
-                df_lines = df.to_string().split("\n")
-                lines.extend(["", "  Active orders:"] +
-                                ["    " + line for line in df_lines])
-        else:
-            lines.extend(["", "  No active maker orders."])
-
-        filled_trades = self.filled_trades()
-        average_price = (statistics.mean([trade.price for trade in filled_trades])
-                            if filled_trades
-                            else Decimal(0))
-        lines.extend(["",
-                        f"  Average filled orders price: "
-                        f"{PerformanceMetrics.smart_round(average_price)} "
-                        f"{market_info.quote_asset}"])
-
-        lines.extend([f"  Pending amount: {PerformanceMetrics.smart_round(self._quantity_remaining)} "
-                        f"{market_info.base_asset}"])
-
-        warning_lines.extend(self.balance_warning([market_info]))
-
-        if warning_lines:
-            lines.extend(["", "*** WARNINGS ***"] + warning_lines)
-
-        return "\n".join(lines)
-    # =======================================================
+    
 
     def tick(self):
         """Updates every second"""
@@ -227,4 +168,12 @@ class Quoter(StrategyPyBase):
         self.logger().warning(f"Current Bin: {self._current_bin}")
 
 
+    def start(self, clock: Clock, timestamp: float):
+        self.logger().info(f"Waiting for {self._order_delay_time} to place orders")
+        self._previous_timestamp = timestamp
+        self._last_timestamp = timestamp
+
+
+
         
+    
