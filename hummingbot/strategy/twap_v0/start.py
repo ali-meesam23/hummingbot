@@ -4,7 +4,7 @@ from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
 
 # STRATEGY
 from hummingbot.strategy.twap_v0 import (
-    TWAP
+    TWAP_V0
 )
 # CONFIGURATION
 from hummingbot.strategy.passive_twap.passive_twap_config_map import passive_twap_config_map

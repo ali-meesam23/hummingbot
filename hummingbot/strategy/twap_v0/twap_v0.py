@@ -21,7 +21,7 @@ from hummingbot.logger import HummingbotLogger
 # INIT Logger variable
 hws_logger = None
 
-class TWAP(StrategyPyBase):
+class TWAP_V0(StrategyPyBase):
 
     # CREATE A LOGGER
     @classmethod
@@ -217,6 +217,8 @@ class TWAP(StrategyPyBase):
                 return
             else:
                 self.logger().warning(f"{self._market_info.market.name} is ready. Trading Started")
+
+        self.logger().warning(f"Current Bin: {self._current_bin}")
 
 
         
