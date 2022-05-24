@@ -16,12 +16,12 @@ def str2bool(value: str):
 
 ############ PROMPTS ############
 def market_prompt():
-    connector = passive_twap_config_map.get('connetor').value
+    connector = quoter_config_map.get('connector').value
     return f"{connector} >> Trading Pair: "
 
 def target_asset_amount_prompt():
     """'token amount'"""
-    trading_pair = passive_twap_config_map.get("trading_pair").value
+    trading_pair = quoter_config_map.get("trading_pair").value
     base_token, _ = trading_pair.split("-")
     return f"What is the total amount of {base_token} to be traded? (Default is 1.0) >>> "
 
@@ -41,16 +41,16 @@ def validate_spread(value:str=None):
 
 
 
-passive_twap_config_map = {
+quoter_config_map = {
     "strategy":
         ConfigVar(key="strategy",
                   prompt=None,
-                  default="twap_v0"),
+                  default="quoter"),
     "connector":ConfigVar(
             key="connector",
             prompt="Exchange: ",
-            validator=validate_exchange,
-            on_validated=lambda value: required_exchanges.append(value),
+            # validator=validate_exchange,
+            # on_validated=lambda value: required_exchanges.append(value),
             prompt_on_new=True    
         ),
     "trading_pair":ConfigVar(

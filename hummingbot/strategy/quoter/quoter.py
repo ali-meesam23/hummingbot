@@ -1,3 +1,5 @@
+#!/home/pi/miniforge3/envs/hummingbot/bin python
+
 # BUILT-IN IMPORTS
 import logging
 import statistics
@@ -21,7 +23,7 @@ from hummingbot.logger import HummingbotLogger
 # INIT Logger variable
 hws_logger = None
 
-class TWAP(StrategyPyBase):
+class Quoter(StrategyPyBase):
 
     # CREATE A LOGGER
     @classmethod

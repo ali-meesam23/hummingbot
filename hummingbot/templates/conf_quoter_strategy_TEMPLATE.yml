@@ -1,0 +1,25 @@
+########################################################
+###       Execution4 strategy config               ###
+########################################################
+
+template_version: 1
+strategy: null
+# The following configuations are only required for the
+# twap strategy
+
+# Connector and token parameters
+connector: null
+trading_pair: null
+
+# Specify buy/sell.
+trade_side: "buy"
+
+# Total amount to be traded, considering all orders
+target_asset_amount: null
+
+
+TTC: "60.0"
+
+GNT: "60.0"
+
+MAX_SPREAD: "30.0"
