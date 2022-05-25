@@ -7,6 +7,8 @@ import time
 from decimal import Decimal
 from typing import Optional, List, Dict, Tuple
 
+import numpy as np
+
 # CONNECTOR
 from hummingbot.connector.exchange_base import ExchangeBase
 from hummingbot.core.clock import Clock
@@ -68,10 +70,14 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
 
         self._market_info = market_info
         self._is_buy = is_buy
-        self._target_asset_amount = target_asset_amount
-        self._TTC = TTC * 60
-        self._GNT = GNT
-        self._MAX_SPREAD = MAX_SPREAD
+        self._target_asset_amount = Decimal(str(target_asset_amount))
+        self._TTC = Decimal(str(TTC)) * Decimal('60')
+        self._GNT = Decimal(str(GNT))
+        self._MAX_SPREAD = Decimal(str(MAX_SPREAD))
+
+        # Intervals
+        # Bins are linked to the intervals
+        self.intervals = np.linspace(0,int(TTC),int(GNT)+1)
         
         self.quote_balance =self._market_info.quote_asset
         self.base_balance = self._market_info.base_asset
@@ -83,12 +89,12 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
         self._execution_state = True
         self.time_to_cancel = {}
         self._start_time = time.time()
-        self._previous_time_stamp = 0   # TRACKING
-        self._last_timestamp = 0         # STARTING POINT
+        self._previous_time_stamp = Decimal("0")   # TRACKING
+        self._last_timestamp = Decimal("0")         # STARTING POINT
         self._remaining_time = self._TTC # Total Time/Duration seconds
         self._remaining_bins = GNT # Total Bins
-        self._current_bin = self._GNT-self._remaining_bins
-        self._time_per_bin = TTC/GNT
+        self._current_bin = Decimal("0")
+        self._time_per_bin = Decimal(self._TTC/self._GNT)
         self._order_delay_time = self._time_per_bin # Once the Order is Executed in the bin
         self._bin_remaining_time = self._time_per_bin
         self._quantity_remaining = target_asset_amount
@@ -141,6 +147,12 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
         if pair not in prices:
             prices[pair] = Decimal(self._market_info.get_mid_price()+curr_spread)
         return prices
+
+    def current_spread_ByTimeRemaining(self,c_time):
+        """y=mx >> Linear
+        c_time: Total Time Remaining
+        """
+        return (self._MAX_SPREAD/self._time_per_bin)*(c_time)
     
     def start(self, clock: Clock, timestamp: float):
         self.logger().info(f"Waiting for {self._order_delay_time} to place orders")
@@ -163,8 +175,6 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
             self._last_timestamp = timestamp
 
         self.logger().warning(f"Current Bin: {self._current_bin}")
-        if int(time.time() - self._start_time)%int(self._time_per_bin)==0:
-            self._current_bin+=1
         # self.logger().warning(f"BALANCE: {self._market_info.base_balance} {self._market_info.base_asset}")
 
     def process_tick(self, timestamp: float):
@@ -191,6 +201,30 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
                                   "making may be dangerous when markets or networks are unstable.")
         
 
+        # CURRENT TIME ELAPSED
+        c_time = Decimal(str(time.time()-self._start_time))
+            
+        for _i, i in enumerate(range(1,len(self.intervals))):
+            # Interval Upper Bound
+            x = Decimal(self.intervals[i-1])
+            # Interval Lower Bound
+            z = Decimal(self.intervals[i])
+            
+            # Get curent bin based on iternval
+            if x<=c_time<z:
+                self._current_bin = Decimal(_i+1)
+                break # get z to calculate remaining time to calculate spread
+            elif c_time>=self.intervals[-1]:
+                self._current_bin = self._GNT
+        # REMAINING BIN TIME
+        self._remaining_bin_time = z-c_time
+        # REMAINING BINS
+        self._remaining_bin = self._GNT-self._current_bin
+        
+        log_msg = f"Current Bin: {self._current_bin} >> remaining time {round(self._remaining_bin_time,1)} >> Spread: {int(self.current_spread_ByTimeRemaining(self._remaining_bin_time))}bps"
+        self.logger().info(log_msg)
+
+
         if self._current_bin<self._GNT:
             self.process_market(self._market_info)
 
@@ -201,6 +235,7 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
 
         :param market_info: a market trading pair
         """
+
         # if self._quantity_remaining > 0:
 
         #     # If current timestamp is greater than the start timestamp and its the first order
@@ -221,6 +256,7 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
         #                            f" with time delay: {self._order_delay_time}. Trying to place orders now. ")
         #         self._previous_timestamp = self.current_timestamp
         #         self.place_orders_for_market(market_info)
+
 
         active_orders = self.market_info_to_active_orders.get(market_info, [])
 
