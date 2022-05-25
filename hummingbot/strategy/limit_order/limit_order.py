@@ -58,4 +58,4 @@ class LimitOrder(StrategyPyBase):
         self.logger().info(f"You buy limit order {order_completed_event.order_id} has been executed")
         self.logger().info(order_completed_event)
         self.logger().warning(f"BALANCE: {self._market_info.base_balance} {self._market_info.base_asset}")
-        self.logger().warning(f"BALANCE: {self._market_info.quote_balance} {self._market_info.base_asset}")
+        self.logger().warning(f"BALANCE: {self._market_info.quote_balance} {self._market_info.quote_asset}")
