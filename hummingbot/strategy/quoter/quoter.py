@@ -77,7 +77,7 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
 
         # Intervals
         # Bins are linked to the intervals
-        self.intervals = np.linspace(0,int(TTC),int(GNT)+1)
+        self.intervals = np.linspace(0,int(self._TTC),int(self._GNT)+1)
         
         self.quote_balance =self._market_info.quote_asset
         self.base_balance = self._market_info.base_asset
@@ -88,7 +88,7 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
         self._order_completed = False
         self._execution_state = True
         self.time_to_cancel = {}
-        self._start_time = time.time()
+        self._start_time = Decimal(str(time.time()))
         self._previous_time_stamp = Decimal("0")   # TRACKING
         self._last_timestamp = Decimal("0")         # STARTING POINT
         self._remaining_time = self._TTC # Total Time/Duration seconds
@@ -99,6 +99,7 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
         self._bin_remaining_time = self._time_per_bin
         self._quantity_remaining = target_asset_amount
         self._current_spread = MAX_SPREAD - (self._bin_remaining_time/2)
+        self._counter = Decimal("0")
 
         
         if cancel_order_wait_time<Decimal("10"):
@@ -173,8 +174,31 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
             self._execution_state.process_tick(timestamp,self)
         finally:
             self._last_timestamp = timestamp
-
-        self.logger().warning(f"Current Bin: {self._current_bin}")
+        
+        # CURRENT TIME ELAPSED
+        c_time = Decimal(time.time())-self._start_time
+            
+        for _i, i in enumerate(range(1,len(self.intervals))):
+            # Interval Upper Bound
+            x = Decimal(self.intervals[i-1])
+            # Interval Lower Bound
+            z = Decimal(self.intervals[i])
+            
+            # Get curent bin based on iternval
+            if x<=c_time<z:
+                self._current_bin = Decimal(_i+1)
+                break # get z to calculate remaining time to calculate spread
+            elif c_time>=self.intervals[-1]:
+                self._current_bin = self._GNT
+        # REMAINING BIN TIME
+        self._remaining_bin_time = z-c_time
+        # REMAINING BINS
+        self._remaining_bin = self._GNT-self._current_bin
+        
+        log_msg = f"{self._counter} Current Bin: {self._current_bin} >> remaining time {round(self._remaining_bin_time,1)} >> Spread: {int(self.current_spread_ByTimeRemaining(self._remaining_bin_time))}bps"
+        self.logger().info(log_msg)
+        self._counter+=Decimal('1')
+        # self.logger().warning(f"Current Bin: {self._current_bin}")
         # self.logger().warning(f"BALANCE: {self._market_info.base_balance} {self._market_info.base_asset}")
 
     def process_tick(self, timestamp: float):
@@ -200,30 +224,6 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
             self.logger().warning("WARNING: Some markets are not connected or are down at the moment. Market "
                                   "making may be dangerous when markets or networks are unstable.")
         
-
-        # CURRENT TIME ELAPSED
-        c_time = Decimal(str(time.time()-self._start_time))
-            
-        for _i, i in enumerate(range(1,len(self.intervals))):
-            # Interval Upper Bound
-            x = Decimal(self.intervals[i-1])
-            # Interval Lower Bound
-            z = Decimal(self.intervals[i])
-            
-            # Get curent bin based on iternval
-            if x<=c_time<z:
-                self._current_bin = Decimal(_i+1)
-                break # get z to calculate remaining time to calculate spread
-            elif c_time>=self.intervals[-1]:
-                self._current_bin = self._GNT
-        # REMAINING BIN TIME
-        self._remaining_bin_time = z-c_time
-        # REMAINING BINS
-        self._remaining_bin = self._GNT-self._current_bin
-        
-        log_msg = f"Current Bin: {self._current_bin} >> remaining time {round(self._remaining_bin_time,1)} >> Spread: {int(self.current_spread_ByTimeRemaining(self._remaining_bin_time))}bps"
-        self.logger().info(log_msg)
-
 
         if self._current_bin<self._GNT:
             self.process_market(self._market_info)
