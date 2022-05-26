@@ -6,26 +6,29 @@ import statistics
 import time
 from decimal import Decimal
 from typing import Optional, List, Dict, Tuple
-
 import numpy as np
 
 # CONNECTOR
 from hummingbot.connector.exchange_base import ExchangeBase
-from hummingbot.core.clock import Clock
-# MARKET DATA
-from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
-# CORE - DATA_TYPE
-from hummingbot.core.data_type.limit_order import LimitOrder
-from hummingbot.core.data_type.common import OrderType, TradeType
-from hummingbot.core.network_iterator import NetworkStatus
-# QUOTER OOP
-from hummingbot.strategy.quoter.quoter_events import QuoterEvents
-from hummingbot.strategy.quoter.quoter_market import QuoterMarket
-from hummingbot.strategy.quoter.quoter_status import QuoterStatus
-
-# MAIN STRATEGY CLASS
+# STRATEGY
 from hummingbot.strategy.strategy_py_base import StrategyPyBase
+from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
 from hummingbot.strategy.conditional_execution_state import ConditionalExecutionState, RunAlwaysExecutionState
+# CORE - DATA_TYPE
+from hummingbot.core.data_type.common import OrderType, TradeType
+from hummingbot.core.data_type.limit_order import LimitOrder
+from hummingbot.core.data_type.order_book import OrderBook
+# CORE - CLOCK
+from hummingbot.core.clock import Clock
+# CORE - NETWORK
+from hummingbot.core.network_iterator import NetworkStatus
+# CORE - EVENTS
+from hummingbot.core.event.events import (MarketOrderFailureEvent,
+                                          OrderCancelledEvent,
+                                          OrderExpiredEvent,
+                                          )
+# PERFORMANCE METRICS
+from hummingbot.client.performance import PerformanceMetrics
 # LOGGER
 from hummingbot.logger import HummingbotLogger
 
@@ -33,7 +36,7 @@ from hummingbot.logger import HummingbotLogger
 # INIT Logger variable
 hws_logger = None
 
-class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
+class Quoter(StrategyPyBase):
     
     # CREATE A LOGGER
     @classmethod
@@ -68,48 +71,52 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
         """
         super().__init__()
 
-        self._market_info = market_info
-        self._is_buy = is_buy
-        self._target_asset_amount = Decimal(str(target_asset_amount))
-        self._TTC = Decimal(str(TTC)) * Decimal('60')
-        self._GNT = Decimal(str(GNT))
-        self._MAX_SPREAD = Decimal(str(MAX_SPREAD))
-
-        # Intervals
-        # Bins are linked to the intervals
-        self.intervals = np.linspace(0,int(self._TTC),int(self._GNT)+1)
+        self._connector_ready = False                                   # CONNECTION
+        self._all_markets_ready = False                                 # CONNECTION
+        self._execution_state = True                                    # CONNECTION
+        self._execution_state = execution_state or RunAlwaysExecutionState() # CONNECTION
         
-        self.quote_balance =self._market_info.quote_asset
-        self.base_balance = self._market_info.base_asset
-        self._connector_ready = False
-        self._all_markets_ready = False
-        self._first_order = True
-        self._place_orders = True
-        self._order_completed = False
-        self._execution_state = True
-        self.time_to_cancel = {}
-        self._start_time = Decimal(str(time.time()))
-        self._previous_time_stamp = Decimal("0")   # TRACKING
-        self._last_timestamp = Decimal("0")         # STARTING POINT
-        self._remaining_time = self._TTC # Total Time/Duration seconds
-        self._remaining_bins = GNT # Total Bins
-        self._current_bin = Decimal("0")
-        self._time_per_bin = Decimal(self._TTC/self._GNT)
-        self._order_delay_time = self._time_per_bin # Once the Order is Executed in the bin
-        self._bin_remaining_time = self._time_per_bin
-        self._quantity_remaining = target_asset_amount
-        self._current_spread = MAX_SPREAD - (self._bin_remaining_time/2)
-        self._counter = Decimal("0")
+        self._market_info = market_info                                 # ASSET
 
+        self._TTC = Decimal(str(TTC)) * Decimal('60')                   # COUNTER
+        self._GNT = Decimal(str(GNT))                                   # COUNTER 
+        self.intervals = np.linspace(0,int(self._TTC),int(self._GNT)+1) # COUNTER: Bins are linked to the intervals | Splitting Total Duration Equally amoung bins
+        self._start_time = Decimal(str(time.time()))                    # COUNTER
+        self._previous_time_stamp = Decimal("0")                        # COUNTER: TRACKING
+        self._last_timestamp = Decimal("0")                             # COUNTER: STARTING POINT
+        self._remaining_time = self._TTC                                # COUNTER:  Total Time/Duration seconds
+        self._remaining_bins = GNT                                      # COUNTER: Total Bins
+        self._previous_bin = Decimal("0")                               # COUNTER: BINS
+        self._current_bin = Decimal("0")                                # COUNTER: BINS
+        self._time_per_bin = Decimal(self._TTC/self._GNT)               # COUNTER: BINS
+        self._order_delay_time = self._time_per_bin                     # COUNTER: Once the Order is Executed in the bin
+        self._bin_remaining_time = self._time_per_bin                   # COUNTER
+        self._counter = Decimal("0")                                    # COUNTER
         
+        self._is_buy = is_buy                                           # ORDER
+        self._first_order = True                                        # ORDER
+        self._place_orders = True                                       # ORDER
+        self._order_completed = False                                   # ORDER
+        self.time_to_cancel = {}                                        # ORDER
+        self._target_asset_amount = Decimal(str(target_asset_amount))   # ORDER
+        self._initial_base_amount = Decimal(self._market_info.base_balance)
+        self._total_quantity_remaining = Decimal(self._target_asset_amount-self._market_info.base_balance)
+        # self._target_base_amount = self._target_asset_amount + self._initial_base_amount # ORDER: Final Base Amount
+        
+        self._MAX_SPREAD = Decimal(str(MAX_SPREAD))/Decimal("100")      # ORDER: Adjusting for %
+        self._MAX_SPREAD = -self._MAX_SPREAD if self._is_buy else self._MAX_SPREAD
+        self._current_spread = self._MAX_SPREAD                        # ORDER
+        
+        self._current_order_price = Decimal((1+self._current_spread)*self._market_info.get_mid_price())
+        self._quantity_remaining = self._target_asset_amount/self._remaining_bins # ORDER
         if cancel_order_wait_time<Decimal("10"):
-            self._cancel_order_wait_time = Decimal('10')
+            self._cancel_order_wait_time = Decimal('10')                # ORDER
         else:
-            self._cancel_order_wait_time = cancel_order_wait_time
-        # Reporting Interval for Any Errors
-        self._status_report_interval = status_report_interval
-        self._execution_state = execution_state or RunAlwaysExecutionState()
-        self.add_markets([market_info.market])
+            self._cancel_order_wait_time = cancel_order_wait_time       # ORDER
+        
+        self._status_report_interval = status_report_interval           # REPORT: Reporting Interval for Any Errors
+        
+        self.add_markets([market_info.market])                          # CONNECTION
 
     @property
     def active_bids(self) -> List[Tuple[ExchangeBase, LimitOrder]]:
@@ -153,7 +160,7 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
         """y=mx >> Linear
         c_time: Total Time Remaining
         """
-        return (self._MAX_SPREAD/self._time_per_bin)*(c_time)
+        return Decimal((self._MAX_SPREAD/self._time_per_bin)*(c_time))
     
     def start(self, clock: Clock, timestamp: float):
         self.logger().info(f"Waiting for {self._order_delay_time} to place orders")
@@ -170,11 +177,6 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
                 return
             else:
                 self.logger().warning(f"{self._market_info.market.name} is ready. Trading Started")
-        try:
-            self._execution_state.process_tick(timestamp,self)
-        finally:
-            self._last_timestamp = timestamp
-        
         # CURRENT TIME ELAPSED
         c_time = Decimal(time.time())-self._start_time
             
@@ -193,14 +195,20 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
         # REMAINING BIN TIME
         self._remaining_bin_time = z-c_time
         # REMAINING BINS
-        self._remaining_bin = self._GNT-self._current_bin
-        
-        log_msg = f"{self._counter} Current Bin: {self._current_bin} >> remaining time {round(self._remaining_bin_time,1)} >> Spread: {int(self.current_spread_ByTimeRemaining(self._remaining_bin_time))}bps"
+        self._remaining_bins = self._GNT-self._current_bin
+        # CURRENT SPREAD
+        self._current_spread = self.current_spread_ByTimeRemaining(self._remaining_bin_time)
+        log_msg = f"{self._counter} Current Bin: {self._current_bin} >> remaining time {round(self._remaining_bin_time,1)} >> Spread: {round(self._current_spread*100,1)}%"
         self.logger().info(log_msg)
         self._counter+=Decimal('1')
         # self.logger().warning(f"Current Bin: {self._current_bin}")
         # self.logger().warning(f"BALANCE: {self._market_info.base_balance} {self._market_info.base_asset}")
 
+        try:
+            self._execution_state.process_tick(timestamp,self)
+        finally:
+            self._last_timestamp = timestamp
+        
     def process_tick(self, timestamp: float):
         """
         Clock tick entry point.
@@ -225,7 +233,9 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
                                   "making may be dangerous when markets or networks are unstable.")
         
 
-        if self._current_bin<self._GNT:
+        self._total_quantity_remaining = Decimal(self._target_asset_amount-self._market_info.base_balance)
+        # MODIFY GREATER THAN TO LESS THAN IF SHORTING?
+        if self._current_bin<self._GNT and self._total_quantity_remaining>=0:
             self.process_market(self._market_info)
 
     def process_market(self, market_info):
@@ -236,36 +246,261 @@ class Quoter(StrategyPyBase,QuoterEvents,QuoterMarket,QuoterStatus):
         :param market_info: a market trading pair
         """
 
-        # if self._quantity_remaining > 0:
+        if self._current_bin > self._previous_bin:
+            # UPDATE BIN QUANTITY for the order
+            self._quantity_remaining = self._total_quantity_remaining/self._remaining_bins
+            self._current_bin=self._previous_bin
 
-        #     # If current timestamp is greater than the start timestamp and its the first order
-        #     if (self.current_timestamp > self._previous_timestamp) and self._first_order:
+        ######### REFRSH RATE 10 seconds
+        # GET THE LATEST PRICE AND UPDATE WITH THE SPREAD
+        if self._counter%Decimal('10')==Decimal("0") or self._counter==Decimal("1"):
+            ####################PRICE_UPDATE####################
+            current_price = self._market_info.get_mid_price()
+            self._curernt_order_price = current_price*(Decimal("1")-self._current_spread) if self._is_buy else current_price*(Decimal("1")+self._current_spread)
 
-        #         self.logger().info("Trying to place orders now. ")
-        #         self._previous_timestamp = self.current_timestamp
-        #         self.place_orders_for_market(market_info)
-        #         self._first_order = False
+            log_msg=f"{self._market_info.trading_pair}: CurrentPrice: ${current_price} | Order Price: {self._curernt_order_price} | SPRD: {abs(self._curernt_order_price-current_price)}bps"
+            self.logger().info(log_msg)
 
-        #     # If current timestamp is greater than the start timestamp + time delay place orders
-        #     elif (self.current_timestamp > self._previous_timestamp + self._order_delay_time) and (self._first_order is False):
-        #         self.logger().info("Current time: "
-        #                            f"{datetime.fromtimestamp(self.current_timestamp).strftime('%Y-%m-%d %H:%M:%S')} "
-        #                            "is now greater than "
-        #                            "Previous time: "
-        #                            f"{datetime.fromtimestamp(self._previous_timestamp).strftime('%Y-%m-%d %H:%M:%S')} "
-        #                            f" with time delay: {self._order_delay_time}. Trying to place orders now. ")
-        #         self._previous_timestamp = self.current_timestamp
-        #         self.place_orders_for_market(market_info)
+            # GET ACTIVE ORDERS
+            active_orders = self.market_info_to_active_orders.get(self._market_info, [])
+
+            # CANCEL ORDERS
+            orders_to_cancel = (active_order
+                                for active_order
+                                in active_orders
+                                if self.current_timestamp >= self._time_to_cancel[active_order.client_order_id])
+
+            for order in orders_to_cancel:
+                self.cancel_order(market_info, order.client_order_id)
+
+            # PLACING ORDER
+            if self._quantity_remaining > 0:
+                self.logger().info("Trying to place orders now. ")
+                self._previous_timestamp = self.current_timestamp
+                self.place_orders_for_market(market_info)
+                log_msg = f'Remaining Quantity: {self._quantity_remaining}'
+                self.logger().info(log_msg)
+                self._first_order = False
+            else:
+                self.logger().info("Fully Executed Bin: {self._quantity_remaning} Coins Left")
+
+            
+    ##################################################### EVENTS ############################################################
+
+    def did_fill_order(self, order_filled_event):
+        """
+        Output log for filled order.
+        :param order_filled_event: Order filled event
+        """
+        order_id: str = order_filled_event.order_id
+        market_info = self.order_tracker.get_shadow_market_pair_from_order_id(order_id)
+
+        if market_info is not None:
+            self.log_with_clock(logging.INFO,
+                                f"({market_info.trading_pair}) Limit {order_filled_event.trade_type.name.lower()} order of "
+                                f"{order_filled_event.amount} {market_info.base_asset} filled.")
+
+    def did_complete_buy_order(self, order_completed_event):
+        """
+        Output log for completed buy order.
+        :param order_completed_event: Order completed event
+        """
+        self.log_complete_order(order_completed_event)
+
+    def did_complete_sell_order(self, order_completed_event):
+        """
+        Output log for completed sell order.
+        :param order_completed_event: Order completed event
+        """
+        self.log_complete_order(order_completed_event)
+
+    def log_complete_order(self, order_completed_event):
+        """
+        Output log for completed order.
+        :param order_completed_event: Order completed event
+        """
+        order_id: str = order_completed_event.order_id
+        market_info = self.order_tracker.get_market_pair_from_order_id(order_id)
+
+        if market_info is not None:
+            limit_order_record = self.order_tracker.get_limit_order(market_info, order_id)
+            order_type = "buy" if limit_order_record.is_buy else "sell"
+            self.log_with_clock(
+                logging.INFO,
+                f"({market_info.trading_pair}) Limit {order_type} order {order_id} "
+                f"({limit_order_record.quantity} {limit_order_record.base_currency} @ "
+                f"{limit_order_record.price} {limit_order_record.quote_currency}) has been filled."
+            )
+
+    def did_cancel_order(self, cancelled_event: OrderCancelledEvent):
+        self.update_remaining_after_removing_order(cancelled_event.order_id, 'cancel')
+
+    def did_fail_order(self, order_failed_event: MarketOrderFailureEvent):
+        self.update_remaining_after_removing_order(order_failed_event.order_id, 'fail')
+
+    def did_expire_order(self, expired_event: OrderExpiredEvent):
+        self.update_remaining_after_removing_order(expired_event.order_id, 'expire')
+
+    def update_remaining_after_removing_order(self, order_id: str, event_type: str):
+        market_info = self.order_tracker.get_market_pair_from_order_id(order_id)
+
+        if market_info is not None:
+            limit_order_record = self.order_tracker.get_limit_order(market_info, order_id)
+            if limit_order_record is not None:
+                self.log_with_clock(logging.INFO, f"Updating status after order {event_type} (id: {order_id})")
+                self._quantity_remaining += limit_order_record.quantity
+
+
+    def filled_trades(self):
+        """Returns a list of all filled trades generated from limit orders with the same 
+        trade_type (buy/sell) the strategy has in its config
+        !!!NOTE: self.trades is no where in the code other than this function!!!"""
+        trade_type = TradeType.BUY if self._is_buy else TradeType.SELL
+        return [
+            trade for trade in self.trades
+            if trade.trade_type == trade_type.name and trade.order_type == OrderType.LIMIT
+        ]
+
+
+    ####################################################### MARKET ##########################################################
+
+    def has_enough_balance(self, market_info, amount: Decimal):
+        """
+        Checks to make sure the user has the sufficient balance in order to place the specified order
+
+        :param market_info: a market trading pair
+        :param amount: order amount
+        :return: True if user has enough balance, False if not
+        """
+        market: ExchangeBase = market_info.market
+        base_asset_balance = market.get_balance(market_info.base_asset)
+        quote_asset_balance = market.get_balance(market_info.quote_asset)
+        order_book: OrderBook = market_info.order_book
+        price = order_book.get_price_for_volume(True, float(amount)).result_price
+
+        return quote_asset_balance >= (amount * Decimal(price)) \
+            if self._is_buy \
+            else base_asset_balance >= amount
+
+    def place_orders_for_market(self, market_info):
+        """
+        Places an individual order specified by the user input if the user has enough balance and if the order quantity
+        can be broken up to the number of desired orders
+        :param market_info: a market trading pair
+        """
+        # EXCHANGE
+        market: ExchangeBase = market_info.market
+        # ORDER AMOUNT
+        curr_order_amount = self._quantity_remaining
+        # ORDER AMOUNT FORMATTING
+        quantized_amount = market.quantize_order_amount(market_info.trading_pair, Decimal(curr_order_amount))
+        # ORDER PRICE
+        quantized_price = market.quantize_order_price(market_info.trading_pair, Decimal(self._current_order_price))
+
+        self.logger().debug("Checking to see if the incremental order size is possible")
+        self.logger().debug("Checking to see if the user has enough balance to place orders")
+
+        if quantized_amount != 0:
+            if self.has_enough_balance(market_info, quantized_amount):
+                if self._is_buy:
+                    order_id = self.buy_with_specific_market(market_info,
+                                                             amount=quantized_amount,
+                                                             order_type=OrderType.LIMIT,
+                                                             price=quantized_price)
+                    self.logger().info("Limit buy order has been placed")
+                else:
+                    order_id = self.sell_with_specific_market(market_info,
+                                                              amount=quantized_amount,
+                                                              order_type=OrderType.LIMIT,
+                                                              price=quantized_price)
+                    self.logger().info("Limit sell order has been placed")
+                # self._time_to_cancel[order_id] = self.current_timestamp + self._cancel_order_wait_time
+
+                self._quantity_remaining = Decimal(self._quantity_remaining) - quantized_amount
+
+            else:
+                self.logger().info("Not enough balance to run the strategy. Please check balances and try again.")
+        else:
+            self.logger().warning("Not possible to break the order into the desired number of segments.")
+
+
+
+
+
+    ######################################################## STATUS #########################################################
+
+    # ======================= STATUS =======================
+    def configuration_status_lines(self,):
+        lines = ["", "  Configuration:"]
+
+        lines.append("    "
+            f"Remaining amount: {PerformanceMetrics.smart_round(self._quantity_remaining)} "
+            f"{self._market_info.base}    "
+            f"Order price: {PerformanceMetrics.smart_round(self.get_order_prices[self._market_info.trading_pair])} "
+            f"{self._market_info.quote_asset}    "
+            f"Order size: {PerformanceMetrics.smart_round(self._order_size)} "
+            f"{self._market_info.base_asset}")
+
+        lines.append(f"    Execution type: {self._execution_state}")
+
+        return lines
+
+    def format_status(self) -> str:
+        market_info = self._market_info
+        lines: list = []
+        warning_lines: list = []
+
+        lines.extend(self.configuration_status_lines())
 
 
         active_orders = self.market_info_to_active_orders.get(market_info, [])
 
-        orders_to_cancel = (active_order
-                            for active_order
-                            in active_orders
-                            if self.current_timestamp >= self._time_to_cancel[active_order.client_order_id])
+        warning_lines.extend(self.network_warning([market_info]))
 
-        for order in orders_to_cancel:
-            self.cancel_order(market_info, order.client_order_id)
-        
-    
+        markets_df = self.market_status_data_frame([market_info])
+        lines.extend(["", "  Markets:"] + ["    " + line for line in markets_df.to_string().split("\n")])
+
+        assets_df = self.wallet_balance_data_frame([market_info])
+        lines.extend(["", "  Assets:"] + ["    " + line for line in assets_df.to_string().split("\n")])
+
+        # See if there're any open orders.
+        if len(active_orders) > 0:
+            price_provider = None
+            # for market_info in self._market_infos.values():
+            price_provider = market_info
+            if price_provider is not None:
+                df = LimitOrder.to_pandas(active_orders, mid_price=price_provider.get_mid_price())
+                if self._is_buy:
+                    # Descend from the price closest to the mid price
+                    df = df.sort_values(by=['Price'], ascending=False)
+                else:
+                    # Ascend from the price closest to the mid price
+                    df = df.sort_values(by=['Price'], ascending=True)
+                df = df.reset_index(drop=True)
+                df_lines = df.to_string().split("\n")
+                lines.extend(["", "  Active orders:"] +
+                                ["    " + line for line in df_lines])
+        else:
+            lines.extend(["", "  No active maker orders."])
+
+        filled_trades = self.filled_trades()
+        average_price = (statistics.mean([trade.price for trade in filled_trades])
+                            if filled_trades
+                            else Decimal(0))
+        lines.extend(["",
+                        f"  Average filled orders price: "
+                        f"{PerformanceMetrics.smart_round(average_price)} "
+                        f"{market_info.quote_asset}"])
+
+        lines.extend([f"  Pending amount: {PerformanceMetrics.smart_round(self._quantity_remaining)} "
+                        f"{market_info.base_asset}"])
+
+        warning_lines.extend(self.balance_warning([market_info]))
+
+        if warning_lines:
+            lines.extend(["", "*** WARNINGS ***"] + warning_lines)
+
+        return "\n".join(lines)
+
+
+    #################################################################################################################

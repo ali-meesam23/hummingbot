@@ -23,7 +23,7 @@ def target_asset_amount_prompt():
     """'token amount'"""
     trading_pair = quoter_config_map.get("trading_pair").value
     base_token, _ = trading_pair.split("-")
-    return f"What is the total amount of {base_token} to be traded? (Default is 1.0) >>> "
+    return f"What is the total amount of {base_token} to be traded? (Default is 0.5) >>> "
 
 
 ############ VALIDATIONS ############
@@ -51,6 +51,7 @@ quoter_config_map = {
             prompt="Exchange: ",
             # validator=validate_exchange,
             # on_validated=lambda value: required_exchanges.append(value),
+            default="binance_perpetual_testnet",
             prompt_on_new=True    
         ),
     "trading_pair":ConfigVar(
@@ -69,7 +70,7 @@ quoter_config_map = {
     "target_asset_amount":ConfigVar(
         key="target_asset_amount",
         prompt=target_asset_amount_prompt,
-        default=1.0,
+        default=0.5,
         type_str="decimal",
         validator=lambda v: validate_decimal(v, min_value=Decimal("0"), inclusive=False),
         prompt_on_new=True),
@@ -92,9 +93,9 @@ quoter_config_map = {
         prompt_on_new=True),
     "MAX_SPREAD":ConfigVar(
         key="MAX_SPREAD",
-        prompt="Maximum Spread To Place First Order in Each Interval? "
+        prompt="Maximum (%) Spread in Each Interval? "
                 ">>> ",
-        default=30.0,
+        default=2.0,
         type_str="decimal",
         validator=validate_spread,
         prompt_on_new=True)
