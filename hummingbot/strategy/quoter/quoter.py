@@ -183,7 +183,7 @@ class Quoter(StrategyPyBase):
         self._remaining_bins = self._GNT-self._current_bin
         # CURRENT SPREAD >> CHANGE CTIME REMAINIGN WITH REFRESH RATE for last intervals
         if self._remaining_bin_time<Decimal('21'):
-            ctime_for_spreadcalc = Decimal("0")
+            ctime_for_spreadcalc = self._remaining_bin_time/Decimal("2")
         else:
             ctime_for_spreadcalc = self._remaining_bin_time
         self._current_spread = self.current_spread_ByTimeRemaining(ctime_for_spreadcalc)
