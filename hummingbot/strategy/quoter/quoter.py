@@ -101,13 +101,12 @@ class Quoter(StrategyPyBase):
         self._target_asset_amount = Decimal(str(target_asset_amount))   # ORDER
         self._initial_base_amount = Decimal(self._market_info.base_balance)
         self._total_quantity_remaining = Decimal(self._target_asset_amount-self._market_info.base_balance)
-        # self._target_base_amount = self._target_asset_amount + self._initial_base_amount # ORDER: Final Base Amount
         
         self._MAX_SPREAD = Decimal(str(MAX_SPREAD))/Decimal("100")      # ORDER: Adjusting for %
         self._MAX_SPREAD = -self._MAX_SPREAD if self._is_buy else self._MAX_SPREAD
         self._current_spread = self._MAX_SPREAD                        # ORDER
-        
-        self._current_order_price = Decimal((1+self._current_spread)*self._market_info.get_mid_price())
+        # self._current_order_price = self._market_info.get_mid_price() + (1+self._MAX_SPREAD)
+        self._current_order_price = Decimal("0")
         self._quantity_remaining = self._target_asset_amount/self._remaining_bins # ORDER
         if cancel_order_wait_time<Decimal("10"):
             self._cancel_order_wait_time = Decimal('10')                # ORDER
@@ -142,20 +141,6 @@ class Quoter(StrategyPyBase):
     def place_orders(self):
         return self._place_orders
     
-    @property
-    def get_order_prices(self):
-        """
-        Get Order prices for each trading pair on the exchange
-        return >> {exch:{pair:value,...},...}
-        """
-        curr_spread = -1*self._current_spread if self._is_buy else self._current_spread
-        prices = {}
-        
-        pair = self._market_info.trading_pair
-        if pair not in prices:
-            prices[pair] = Decimal(self._market_info.get_mid_price()+curr_spread)
-        return prices
-
     def current_spread_ByTimeRemaining(self,c_time):
         """y=mx >> Linear
         c_time: Total Time Remaining
@@ -193,11 +178,15 @@ class Quoter(StrategyPyBase):
             elif c_time>=self.intervals[-1]:
                 self._current_bin = self._GNT
         # REMAINING BIN TIME
-        self._remaining_bin_time = z-c_time
+        self._remaining_bin_time = Decimal(z-c_time)
         # REMAINING BINS
         self._remaining_bins = self._GNT-self._current_bin
-        # CURRENT SPREAD
-        self._current_spread = self.current_spread_ByTimeRemaining(self._remaining_bin_time)
+        # CURRENT SPREAD >> CHANGE CTIME REMAINIGN WITH REFRESH RATE for last intervals
+        if self._remaining_bin_time<Decimal('21'):
+            ctime_for_spreadcalc = Decimal("0")
+        else:
+            ctime_for_spreadcalc = self._remaining_bin_time
+        self._current_spread = self.current_spread_ByTimeRemaining(ctime_for_spreadcalc)
         log_msg = f"{self._counter} Current Bin: {self._current_bin} >> remaining time {round(self._remaining_bin_time,1)} >> Spread: {round(self._current_spread*100,1)}%"
         self.logger().info(log_msg)
         self._counter+=Decimal('1')
@@ -235,7 +224,7 @@ class Quoter(StrategyPyBase):
 
         self._total_quantity_remaining = Decimal(self._target_asset_amount-self._market_info.base_balance)
         # MODIFY GREATER THAN TO LESS THAN IF SHORTING?
-        if self._current_bin<self._GNT and self._total_quantity_remaining>=0:
+        if self._current_bin<self._GNT:
             self.process_market(self._market_info)
 
     def process_market(self, market_info):
@@ -251,14 +240,14 @@ class Quoter(StrategyPyBase):
             self._quantity_remaining = self._total_quantity_remaining/self._remaining_bins
             self._current_bin=self._previous_bin
 
-        ######### REFRSH RATE 10 seconds
+        ######### REFRSH RATE 30 seconds
         # GET THE LATEST PRICE AND UPDATE WITH THE SPREAD
-        if self._counter%Decimal('10')==Decimal("0") or self._counter==Decimal("1"):
+        if self._counter%Decimal('20')==Decimal("0") or self._counter==Decimal("1"):
             ####################PRICE_UPDATE####################
             current_price = self._market_info.get_mid_price()
-            self._curernt_order_price = current_price*(Decimal("1")-self._current_spread) if self._is_buy else current_price*(Decimal("1")+self._current_spread)
-
-            log_msg=f"{self._market_info.trading_pair}: CurrentPrice: ${current_price} | Order Price: {self._curernt_order_price} | SPRD: {abs(self._curernt_order_price-current_price)}bps"
+            # self._current_order_price = current_price*(Decimal("1")-self._current_spread) if self._is_buy else current_price*(Decimal("1")+self._current_spread)
+            self._current_order_price = current_price*(1+self._current_spread)
+            log_msg=f"{self._market_info.trading_pair}: CurrentPrice: ${current_price} | Order Price: {self._current_order_price} | SPRD: {abs(self._current_order_price-current_price)}bps"
             self.logger().info(log_msg)
 
             # GET ACTIVE ORDERS
@@ -268,13 +257,13 @@ class Quoter(StrategyPyBase):
             orders_to_cancel = (active_order
                                 for active_order
                                 in active_orders
-                                if self.current_timestamp >= self._time_to_cancel[active_order.client_order_id])
+                                )
 
             for order in orders_to_cancel:
                 self.cancel_order(market_info, order.client_order_id)
 
-            # PLACING ORDER
-            if self._quantity_remaining > 0:
+            # PLACING ORDER if remaining quantity is greater than 0.0009
+            if round(self._quantity_remaining,3) > 0:
                 self.logger().info("Trying to place orders now. ")
                 self._previous_timestamp = self.current_timestamp
                 self.place_orders_for_market(market_info)
@@ -283,6 +272,8 @@ class Quoter(StrategyPyBase):
                 self._first_order = False
             else:
                 self.logger().info("Fully Executed Bin: {self._quantity_remaning} Coins Left")
+
+        
 
             
     ##################################################### EVENTS ############################################################

@@ -57,6 +57,7 @@ quoter_config_map = {
     "trading_pair":ConfigVar(
         key='trading_pair',
         prompt=market_prompt,
+        default='ETH-USDT',
         prompt_on_new=True
     ),
     "trade_side":ConfigVar(
