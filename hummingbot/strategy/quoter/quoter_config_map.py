@@ -59,8 +59,8 @@ quoter_config_map = {
     "connector":ConfigVar(
             key="connector",
             prompt="Exchange: ",
-            validator=validate_exchange,
-            on_validated=lambda value: required_exchanges.append(value),
+            # validator=validate_exchange,
+            # on_validated=lambda value: required_exchanges.append(value),
             default="binance_paper_trade",
             prompt_on_new=True),
 

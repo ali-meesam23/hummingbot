@@ -187,10 +187,11 @@ class Quoter(StrategyPyBase):
         # CURRENT SPREAD >> CHANGE CTIME REMAINIGN WITH REFRESH RATE for last intervals
         # if self._remaining_bin_time<Decimal('21'):
             # ctime_for_spreadcalc = self._remaining_bin_time/Decimal("3")
-        if self._remaining_bin_time<Decimal('12'):
-            ctime_for_spreadcalc = Decimal('0')
-        else:
-            ctime_for_spreadcalc = self._remaining_bin_time
+        # if self._remaining_bin_time<Decimal('12'):
+        #     ctime_for_spreadcalc = Decimal('0')
+        # else:
+        #     ctime_for_spreadcalc = self._remaining_bin_time
+        ctime_for_spreadcalc = Decimal('0')
         self._current_spread = self.current_spread_ByTimeRemaining(ctime_for_spreadcalc)
         log_msg = f"{self._counter} Current Bin: {self._current_bin} >> remaining time {round(self._remaining_bin_time,1)} >> Spread: {round(self._current_spread*100,1)}%"
         self.logger().info(log_msg)
@@ -355,6 +356,9 @@ class Quoter(StrategyPyBase):
             limit_order_record = self.order_tracker.get_limit_order(market_info, order_id)
             if limit_order_record is not None:
                 self.log_with_clock(logging.INFO, f"Updating status after order {event_type} (id: {order_id})")
+                print("*"*50)
+                print(f"\n\n\nLimit Order Record: {limit_order_record}\n\n\n")
+                print("*"*50)
                 self._quantity_remaining += limit_order_record.quantity
 
 
