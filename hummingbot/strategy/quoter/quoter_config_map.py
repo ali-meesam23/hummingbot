@@ -3,12 +3,16 @@ from hummingbot.client.config.config_var import ConfigVar
 # VALIDATORS
 from hummingbot.client.config.config_validators import (
     validate_exchange,
-    validate_decimal
+    validate_decimal,
+    validate_market_trading_pair
 )
 # SETTINGS
 from hummingbot.client.settings import (
-    required_exchanges
+    required_exchanges,
+    AllConnectorSettings
 )
+
+from typing import Optional
 
 ############ HELPER FUNCTIONS ############
 def str2bool(value: str):
@@ -18,6 +22,12 @@ def str2bool(value: str):
 def market_prompt():
     # connector = quoter_config_map.get('connector').value
     return f"Trading Pair: "
+
+# checks if the trading pair is valid
+def validate_market_trading_pair_tuple(value: str) -> Optional[str]:
+    exchange = quoter_config_map.get("connector").value
+    return validate_market_trading_pair(exchange, value)
+
 
 def target_asset_amount_prompt():
     """'token amount'"""
@@ -40,34 +50,35 @@ def validate_spread(value:str=None):
         return result
 
 
-
 quoter_config_map = {
     "strategy":
         ConfigVar(key="strategy",
                   prompt=None,
                   default="quoter"),
+
     "connector":ConfigVar(
             key="connector",
             prompt="Exchange: ",
-            # validator=validate_exchange,
-            # on_validated=lambda value: required_exchanges.append(value),
-            default="binance_perpetual_testnet",
-            prompt_on_new=True    
-        ),
+            validator=validate_exchange,
+            on_validated=lambda value: required_exchanges.append(value),
+            default="binance_paper_trade",
+            prompt_on_new=True),
+
     "trading_pair":ConfigVar(
         key='trading_pair',
         prompt=market_prompt,
+        validator=validate_market_trading_pair_tuple,
         default='ETH-USDT',
-        prompt_on_new=True
-    ),
+        prompt_on_new=True),
+
     "trade_side":ConfigVar(
         key='trade_side',
         prompt="What operation will be executed? (buy/sell) >>> ",
         type_str="str",
         validator=lambda v: None if v in {"buy", "sell", ""} else "Invalid operation type.",
         default="buy",
-        prompt_on_new=True
-    ),
+        prompt_on_new=True),
+
     "target_asset_amount":ConfigVar(
         key="target_asset_amount",
         prompt=target_asset_amount_prompt,
@@ -75,6 +86,7 @@ quoter_config_map = {
         type_str="decimal",
         validator=lambda v: validate_decimal(v, min_value=Decimal("0"), inclusive=False),
         prompt_on_new=True),
+
     "TTC":ConfigVar(
         key="TTC",
         prompt="What is the duration of the execution (minutes)? "
@@ -92,11 +104,12 @@ quoter_config_map = {
         type_str="decimal",
         validator=validate_algo_duration,
         prompt_on_new=True),
+
     "MAX_SPREAD":ConfigVar(
         key="MAX_SPREAD",
         prompt="Maximum (%) Spread in Each Interval? "
                 ">>> ",
-        default=2.0,
+        default=1.0,
         type_str="decimal",
         validator=validate_spread,
         prompt_on_new=True)

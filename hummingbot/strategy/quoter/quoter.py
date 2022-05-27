@@ -85,7 +85,7 @@ class Quoter(StrategyPyBase):
         self._previous_time_stamp = Decimal("0")                        # COUNTER: TRACKING
         self._last_timestamp = Decimal("0")                             # COUNTER: STARTING POINT
         self._remaining_time = self._TTC                                # COUNTER:  Total Time/Duration seconds
-        self._remaining_bins = GNT                                      # COUNTER: Total Bins
+        self._remaining_bins = self._GNT                                      # COUNTER: Total Bins
         self._previous_bin = Decimal("0")                               # COUNTER: BINS
         self._current_bin = Decimal("0")                                # COUNTER: BINS
         self._time_per_bin = Decimal(self._TTC/self._GNT)               # COUNTER: BINS
@@ -105,9 +105,9 @@ class Quoter(StrategyPyBase):
         self._MAX_SPREAD = Decimal(str(MAX_SPREAD))/Decimal("100")      # ORDER: Adjusting for %
         self._MAX_SPREAD = -self._MAX_SPREAD if self._is_buy else self._MAX_SPREAD
         self._current_spread = self._MAX_SPREAD                        # ORDER
-        # self._current_order_price = self._market_info.get_mid_price() + (1+self._MAX_SPREAD)
         self._current_order_price = Decimal("0")
-        self._quantity_remaining = self._target_asset_amount/self._remaining_bins # ORDER
+        self._current_order_size = Decimal("0")
+        self._quantity_remaining = self._total_quantity_remaining/self._remaining_bins # ORDER
         if cancel_order_wait_time<Decimal("10"):
             self._cancel_order_wait_time = Decimal('10')                # ORDER
         else:
@@ -164,6 +164,9 @@ class Quoter(StrategyPyBase):
                 self.logger().warning(f"{self._market_info.market.name} is ready. Trading Started")
         # CURRENT TIME ELAPSED
         c_time = Decimal(time.time())-self._start_time
+        if self._total_quantity_remaining<=0:
+            self.logger().error(f"Remaining Amount: {self._total_quantity_remaining}")
+            return 
             
         for _i, i in enumerate(range(1,len(self.intervals))):
             # Interval Upper Bound
@@ -183,7 +186,7 @@ class Quoter(StrategyPyBase):
         self._remaining_bins = self._GNT-self._current_bin
         # CURRENT SPREAD >> CHANGE CTIME REMAINIGN WITH REFRESH RATE for last intervals
         if self._remaining_bin_time<Decimal('21'):
-            ctime_for_spreadcalc = self._remaining_bin_time/Decimal("2")
+            ctime_for_spreadcalc = self._remaining_bin_time/Decimal("3")
         else:
             ctime_for_spreadcalc = self._remaining_bin_time
         self._current_spread = self.current_spread_ByTimeRemaining(ctime_for_spreadcalc)
@@ -224,7 +227,7 @@ class Quoter(StrategyPyBase):
 
         self._total_quantity_remaining = Decimal(self._target_asset_amount-self._market_info.base_balance)
         # MODIFY GREATER THAN TO LESS THAN IF SHORTING?
-        if self._current_bin<self._GNT:
+        if self._current_bin<=self._GNT:
             self.process_market(self._market_info)
 
     def process_market(self, market_info):
@@ -242,17 +245,23 @@ class Quoter(StrategyPyBase):
 
         ######### REFRSH RATE 30 seconds
         # GET THE LATEST PRICE AND UPDATE WITH THE SPREAD
-        if self._counter%Decimal('20')==Decimal("0") or self._counter==Decimal("1"):
+        # refresh rate >> 5 times per bin or every 5 seconds which ever is bigger
+        if self._counter%Decimal('10')==Decimal("0") or self._counter==Decimal("1"):
             ####################PRICE_UPDATE####################
             current_price = self._market_info.get_mid_price()
             # self._current_order_price = current_price*(Decimal("1")-self._current_spread) if self._is_buy else current_price*(Decimal("1")+self._current_spread)
             self._current_order_price = current_price*(1+self._current_spread)
-            log_msg=f"{self._market_info.trading_pair}: CurrentPrice: ${current_price} | Order Price: {self._current_order_price} | SPRD: {abs(self._current_order_price-current_price)}bps"
-            self.logger().info(log_msg)
+            # log_msg=f"""
+            # {self._market_info.trading_pair}: CurrentPrice: ${round(current_price,2)}
+            # Order Price: ${round(self._current_order_price,2)} | SPRD: ${int(abs(self._current_order_price-current_price))}pts
+            # Quantity Remaining: {self._quantity_remaining}"""
+            # self.logger().info(log_msg)
 
             # GET ACTIVE ORDERS
             active_orders = self.market_info_to_active_orders.get(self._market_info, [])
-
+            active_orders_t = self.active_limit_orders
+            print("\n\n",active_orders_t,"\n\n")
+            
             # CANCEL ORDERS
             orders_to_cancel = (active_order
                                 for active_order
@@ -263,7 +272,8 @@ class Quoter(StrategyPyBase):
                 self.cancel_order(market_info, order.client_order_id)
 
             # PLACING ORDER if remaining quantity is greater than 0.0009
-            if round(self._quantity_remaining,3) > 0:
+            # if round(self._quantity_remaining,4) > Decimal("0"):
+            if self._quantity_remaining !=Decimal('0'):
                 self.logger().info("Trying to place orders now. ")
                 self._previous_timestamp = self.current_timestamp
                 self.place_orders_for_market(market_info)
@@ -271,10 +281,7 @@ class Quoter(StrategyPyBase):
                 self.logger().info(log_msg)
                 self._first_order = False
             else:
-                self.logger().info("Fully Executed Bin: {self._quantity_remaning} Coins Left")
-
-        
-
+                self.logger().info(f"Fully Executed Bin: {self._quantity_remaning} Coins Left")
             
     ##################################################### EVENTS ############################################################
 
@@ -333,9 +340,16 @@ class Quoter(StrategyPyBase):
         self.update_remaining_after_removing_order(expired_event.order_id, 'expire')
 
     def update_remaining_after_removing_order(self, order_id: str, event_type: str):
+        """
+        Update self._quantity_remaining after cancelling the order 
+        so a new order with the right amount can be placed for each bin
+        IF ORDER CANCEL|FAIL|EXPIRE ADD ORDER AMOUNT BACK TO QUANTITY REMAINING
+        """
+        # GET MARKET INFO FROM ORDER ID
         market_info = self.order_tracker.get_market_pair_from_order_id(order_id)
 
         if market_info is not None:
+            # GET ORDER INFO
             limit_order_record = self.order_tracker.get_limit_order(market_info, order_id)
             if limit_order_record is not None:
                 self.log_with_clock(logging.INFO, f"Updating status after order {event_type} (id: {order_id})")
@@ -385,8 +399,16 @@ class Quoter(StrategyPyBase):
         curr_order_amount = self._quantity_remaining
         # ORDER AMOUNT FORMATTING
         quantized_amount = market.quantize_order_amount(market_info.trading_pair, Decimal(curr_order_amount))
+        self._current_order_size = quantized_amount
         # ORDER PRICE
         quantized_price = market.quantize_order_price(market_info.trading_pair, Decimal(self._current_order_price))
+        current_price = market_info.get_mid_price()
+
+        log_msg=f"""
+            {self._market_info.trading_pair}: CurrentPrice: ${current_price}
+            Order Price: ${quantized_price} | SPRD: ${int(abs(self._current_order_price-current_price))}pts
+            Quantity Remaining: {self._quantity_remaining}"""
+        self.logger().info(log_msg)
 
         self.logger().debug("Checking to see if the incremental order size is possible")
         self.logger().debug("Checking to see if the user has enough balance to place orders")
@@ -397,13 +419,15 @@ class Quoter(StrategyPyBase):
                     order_id = self.buy_with_specific_market(market_info,
                                                              amount=quantized_amount,
                                                              order_type=OrderType.LIMIT,
-                                                             price=quantized_price)
+                                                             price=quantized_price
+                                                             )
                     self.logger().info("Limit buy order has been placed")
                 else:
                     order_id = self.sell_with_specific_market(market_info,
                                                               amount=quantized_amount,
                                                               order_type=OrderType.LIMIT,
-                                                              price=quantized_price)
+                                                              price=quantized_price
+                                                              )
                     self.logger().info("Limit sell order has been placed")
                 # self._time_to_cancel[order_id] = self.current_timestamp + self._cancel_order_wait_time
 
@@ -426,10 +450,10 @@ class Quoter(StrategyPyBase):
 
         lines.append("    "
             f"Remaining amount: {PerformanceMetrics.smart_round(self._quantity_remaining)} "
-            f"{self._market_info.base}    "
-            f"Order price: {PerformanceMetrics.smart_round(self.get_order_prices[self._market_info.trading_pair])} "
+            f"{self._market_info.base_asset}    "
+            f"Order price: {PerformanceMetrics.smart_round(self._current_order_price)} "
             f"{self._market_info.quote_asset}    "
-            f"Order size: {PerformanceMetrics.smart_round(self._order_size)} "
+            f"Order size: {PerformanceMetrics.smart_round(self._current_order_size)} "
             f"{self._market_info.base_asset}")
 
         lines.append(f"    Execution type: {self._execution_state}")
