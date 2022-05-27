@@ -61,14 +61,14 @@ quoter_config_map = {
             prompt="Exchange: ",
             # validator=validate_exchange,
             # on_validated=lambda value: required_exchanges.append(value),
-            default="binance_paper_trade",
+            default="binance_perpetual_testnet",
             prompt_on_new=True),
 
     "trading_pair":ConfigVar(
         key='trading_pair',
         prompt=market_prompt,
         validator=validate_market_trading_pair_tuple,
-        default='ETH-USDT',
+        default='BTC-USDT',
         prompt_on_new=True),
 
     "trade_side":ConfigVar(
