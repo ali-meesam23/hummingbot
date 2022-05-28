@@ -78,6 +78,7 @@ class Quoter(StrategyPyBase):
         self._execution_state = execution_state or RunAlwaysExecutionState() # CONNECTION
         
         self._market_info = market_info                                 # ASSET
+        self._base_balance = self._market_info.base_balance
 
         self._TTC = Decimal(str(TTC)) * Decimal('60')                   # COUNTER
         self._GNT = Decimal(str(GNT))                                   # COUNTER 
@@ -101,14 +102,13 @@ class Quoter(StrategyPyBase):
         self.time_to_cancel = {}                                        # ORDER
         self._target_asset_amount = Decimal(str(target_asset_amount))   # ORDER
         self._initial_base_amount = Decimal(self._market_info.base_balance)
-        self._total_quantity_remaining = Decimal(self._target_asset_amount-self._market_info.base_balance)
+        self._total_quantity_remaining = Decimal(self._target_asset_amount-self._base_balance)
         
         self._MAX_SPREAD = Decimal(str(MAX_SPREAD))/Decimal("100")      # ORDER: Adjusting for %
         self._MAX_SPREAD = -self._MAX_SPREAD if self._is_buy else self._MAX_SPREAD
         self._current_spread = self._MAX_SPREAD                        # ORDER
         self._current_order_price = Decimal("0")
         self._current_order_size = Decimal("0")
-        self._quantity_remaining = self._total_quantity_remaining/self._remaining_bins # ORDER
         if cancel_order_wait_time<Decimal("10"):
             self._cancel_order_wait_time = Decimal('10')                # ORDER
         else:
@@ -144,9 +144,9 @@ class Quoter(StrategyPyBase):
     ######################################################## STATUS #########################################################
     def configuration_status_lines(self,):
         lines = ["", "  Configuration:"]
-
+        
         lines.append("    "
-            f"Remaining amount: {PerformanceMetrics.smart_round(self._quantity_remaining)} "
+            f"Remaining amount: {PerformanceMetrics.smart_round(self._target_asset_amount - self._base_balance)} "
             f"{self._market_info.base_asset}    "
             f"Order price: {PerformanceMetrics.smart_round(self._current_order_price)} "
             f"{self._market_info.quote_asset}    "
@@ -214,7 +214,7 @@ class Quoter(StrategyPyBase):
                         f"{PerformanceMetrics.smart_round(average_price)} "
                         f"{market_info.quote_asset}"])
 
-        lines.extend([f"  Pending amount: {PerformanceMetrics.smart_round(self._quantity_remaining)} "
+        lines.extend([f"  Pending amount: {PerformanceMetrics.smart_round(self._target_asset_amount - self._base_balance)} "
                         f"{market_info.base_asset}"])
 
         warning_lines.extend(self.balance_warning([market_info]))
@@ -248,8 +248,7 @@ class Quoter(StrategyPyBase):
             self.log_with_clock(logging.INFO,
                                 f"({market_info.trading_pair}) Limit {order_filled_event.trade_type.name.lower()} order of "
                                 f"{order_filled_event.amount} {market_info.base_asset} filled.")
-        if self._current_bin==self._previous_bin:
-            self._quantity_remaining-=Decimal(order_filled_event.amount)
+            self._base_balance += order_filled_event.amount
 
     def did_complete_buy_order(self, order_completed_event):
         """
@@ -294,7 +293,7 @@ class Quoter(StrategyPyBase):
 
     def update_remaining_after_removing_order(self, order_id: str, event_type: str):
         """
-        Update self._quantity_remaining after cancelling the order 
+        Update quantity after cancelling the order 
         so a new order with the right amount can be placed for each bin
         IF ORDER CANCEL|FAIL|EXPIRE ADD ORDER AMOUNT BACK TO QUANTITY REMAINING
         """
@@ -306,10 +305,9 @@ class Quoter(StrategyPyBase):
             limit_order_record = self.order_tracker.get_limit_order(market_info, order_id)
             if limit_order_record is not None:
                 self.log_with_clock(logging.INFO, f"Updating status after order {event_type} (id: {order_id})")
-                print("*"*50)
-                print(f"\n\n\nLimit Order Record: {limit_order_record}\n\n\n")
-                print("*"*50)
-                self._quantity_remaining += limit_order_record.quantity
+                
+                self.logger().log(1,"*"*50+f"\n\n\nLimit Order Record: {limit_order_record}\n\n\n"+"*"*50)
+
 
     ####################################################### MARKET ##########################################################
 
@@ -332,33 +330,30 @@ class Quoter(StrategyPyBase):
             # log_msg=f"""
             # {self._market_info.trading_pair}: CurrentPrice: ${round(current_price,2)}
             # Order Price: ${round(self._current_order_price,2)} | SPRD: ${int(abs(self._current_order_price-current_price))}pts
-            # Quantity Remaining: {self._quantity_remaining}"""
+            
             # self.logger().info(log_msg)
 
             # PLACING ORDER if remaining quantity is greater than 0.0009
-            if self._quantity_remaining > Decimal('0'):
-                # GET ACTIVE ORDERS
-                active_orders = self.market_info_to_active_orders.get(self._market_info, [])
-                active_orders_t = self.active_limit_orders
-                self.logger().info("\n\nACTIVE ORDERS:\n",active_orders_t,"\n\n")
-                
-                # CANCEL ORDERS
-                orders_to_cancel = (active_order
-                                    for active_order
-                                    in active_orders
-                                    )
+            
+            # GET ACTIVE ORDERS
+            # active_orders = self.market_info_to_active_orders.get(self._market_info, [])
+            # active_orders_t = self.active_limit_orders
+            # self.logger().info("\n\nACTIVE ORDERS:\n",active_orders_t,"\n\n")
+            
+            # # CANCEL ORDERS
+            # orders_to_cancel = (active_order
+            #                     for active_order
+            #                     in active_orders
+            #                     )
 
-                for order in orders_to_cancel:
-                    self.cancel_order(market_info, order.client_order_id)
+            # for order in orders_to_cancel:
+            #     self.cancel_order(market_info, order.client_order_id)
 
-                self.logger().info("Trying to place orders now. ")
-                self._previous_timestamp = self.current_timestamp
-                self.place_orders_for_market(market_info)
-                log_msg = f'Remaining Bin Quantity: {self._quantity_remaining}'
-                self.logger().info(log_msg)
-                self._first_order = False
-            else:
-                self.logger().info(f"Fully Executed Bin: {self._quantity_remaning} Coins Left")
+            # self.logger().info("Trying to place orders now. ")
+            # self._previous_timestamp = self.current_timestamp
+            self.place_orders_for_market(market_info)
+            self._first_order = False
+            
             
     def start(self, clock: Clock, timestamp: float):
         self._previous_timestamp = timestamp
@@ -414,12 +409,7 @@ class Quoter(StrategyPyBase):
         # self.logger().warning(f"Current Bin: {self._current_bin}")
         # self.logger().warning(f"BALANCE: {self._market_info.base_balance} {self._market_info.base_asset}")
         # QUANTITIES : TOTAL  || REMAINING QUANTITY PER BIN
-        self._total_quantity_remaining = Decimal(self._target_asset_amount-self._market_info.base_balance)
-
-        if self._current_bin > self._previous_bin:
-            # UPDATE BIN QUANTITY for the order
-            self._quantity_remaining = self._total_quantity_remaining/self._remaining_bins
-            self._current_bin=self._previous_bin
+        self._total_quantity_remaining = Decimal(self._target_asset_amount-self._base_balance)
 
 
         try:
@@ -464,49 +454,75 @@ class Quoter(StrategyPyBase):
         can be broken up to the number of desired orders
         :param market_info: a market trading pair
         """
-        # EXCHANGE
-        market: ExchangeBase = market_info.market
-        # ORDER AMOUNT
-        curr_order_amount = self._quantity_remaining
-        # ORDER AMOUNT FORMATTING
-        quantized_amount = market.quantize_order_amount(market_info.trading_pair, Decimal(curr_order_amount))
-        self._current_order_size = quantized_amount
-        # ORDER PRICE
-        quantized_price = market.quantize_order_price(market_info.trading_pair, Decimal(self._current_order_price))
-        current_price = market_info.get_mid_price()
 
-        log_msg=f"""
-            {self._market_info.trading_pair}: CurrentPrice: ${current_price}
-            Order Price: ${quantized_price} | SPRD: ${int(abs(self._current_order_price-current_price))}pts
-            Quantity Remaining: {self._quantity_remaining}"""
+        # ACTIVE ORDERS
+        active_orders = self.market_info_to_active_orders.get(self._market_info, [])
+        active_orders_t = self.active_limit_orders
+        self.logger().info(f"\n\nACTIVE ORDERS:\n{active_orders_t}\n\n")
+        
+        # CANCEL ORDERS
+        orders_to_cancel = (active_order
+                            for active_order
+                            in active_orders
+                            )
+
+        for order in orders_to_cancel:
+            self.cancel_order(market_info, order.client_order_id)
+
+        self.logger().info("Trying to place orders now. ")
+        self._previous_timestamp = self.current_timestamp
+        
+        # self._market_info.market.get_balance(self._market_info.base_asset)
+        bin_remaining_quantity = Decimal(self._target_asset_amount/self._GNT * self._current_bin)-Decimal(self._base_balance)
+        
+        log_msg = f'Remaining Bin Quantity (PRE-ORDER): {bin_remaining_quantity}'
+        self.logger().info(log_msg)
+        
+        log_msg = f'TARGET / CURRENT: {self._target_asset_amount} / {self._base_balance} | BIN: {self._current_bin}'
         self.logger().info(log_msg)
 
-        self.logger().debug("Checking to see if the incremental order size is possible")
-        self.logger().debug("Checking to see if the user has enough balance to place orders")
+        if bin_remaining_quantity > Decimal('0'):
+    
+            # EXCHANGE
+            market: ExchangeBase = market_info.market
+            # ORDER AMOUNT (FORMATTING)
+            
+            quantized_amount = market.quantize_order_amount(market_info.trading_pair, Decimal(bin_remaining_quantity))
+            self._current_order_size = quantized_amount
+            # ORDER PRICE
+            quantized_price = market.quantize_order_price(market_info.trading_pair, Decimal(self._current_order_price))
+            current_price = market_info.get_mid_price()
 
-        if quantized_amount != 0:
-            if self.has_enough_balance(market_info, quantized_amount):
-                if self._is_buy:
-                    self.buy_with_specific_market(market_info,
-                                                             amount=quantized_amount,
-                                                             order_type=OrderType.LIMIT,
-                                                             price=quantized_price)
-                    self.logger().info("Limit buy order has been placed")
+            log_msg=f"""
+                {self._market_info.trading_pair}: CurrentPrice: ${current_price}
+                Order Price: ${quantized_price} | SPRD: ${int(abs(self._current_order_price-current_price))}pts
+                Quantity Remaining: {bin_remaining_quantity}"""
+            self.logger().info(log_msg)
+
+            self.logger().debug("Checking to see if the incremental order size is possible")
+            self.logger().debug("Checking to see if the user has enough balance to place orders")
+
+            if quantized_amount != 0:
+                if self.has_enough_balance(market_info, quantized_amount):
+                    if self._is_buy:
+                        self.buy_with_specific_market(market_info,
+                                                                amount=quantized_amount,
+                                                                order_type=OrderType.LIMIT,
+                                                                price=quantized_price)
+                        self.logger().info("Limit buy order has been placed")
+                    else:
+                        self.sell_with_specific_market(market_info,
+                                                                amount=quantized_amount,
+                                                                order_type=OrderType.LIMIT,
+                                                                price=quantized_price
+                                                                )
+                        self.logger().info("Limit sell order has been placed")
                 else:
-                    self.sell_with_specific_market(market_info,
-                                                              amount=quantized_amount,
-                                                              order_type=OrderType.LIMIT,
-                                                              price=quantized_price
-                                                              )
-                    self.logger().info("Limit sell order has been placed")
-                # self._time_to_cancel[order_id] = self.current_timestamp + self._cancel_order_wait_time
-                self._quantity_remaining = Decimal(self._quantity_remaining) - quantized_amount
-
+                    self.logger().info("Not enough balance to run the strategy. Please check balances and try again.")
             else:
-                self.logger().info("Not enough balance to run the strategy. Please check balances and try again.")
+                self.logger().warning("Not possible to break the order into the desired number of segments.")
         else:
-            self.logger().warning("Not possible to break the order into the desired number of segments.")
-
+            self.logger().info(f"Inside PlaceMarketOrder >>> Fully Executed Bin: {bin_remaining_quantity} Coins Left")
 
     def has_enough_balance(self, market_info, amount: Decimal):
         """
