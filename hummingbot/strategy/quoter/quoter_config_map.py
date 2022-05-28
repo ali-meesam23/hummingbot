@@ -4,7 +4,7 @@ from hummingbot.client.config.config_var import ConfigVar
 from hummingbot.client.config.config_validators import (
     validate_exchange,
     validate_decimal,
-    validate_market_trading_pair
+    validate_market_trading_pair,
 )
 # SETTINGS
 from hummingbot.client.settings import (
@@ -37,6 +37,7 @@ def target_asset_amount_prompt():
 
 
 ############ VALIDATIONS ############
+
 def validate_algo_duration(value:str=None):
     """Invalidates non-decimal input and check if duration is greater than 0"""
     result = validate_decimal(value,min_value=Decimal("1"),inclusive=False)
@@ -44,8 +45,8 @@ def validate_algo_duration(value:str=None):
         return result
 
 def validate_spread(value:str=None):
-    """Invalidates non-decimal input and check if duration is greater than 0"""
-    result = validate_decimal(value,min_value=Decimal("0"),inclusive=False)
+    """Invalidates non-decimal input and check if duration is greater than -1%"""
+    result = validate_decimal(value,min_value=Decimal("-1"),inclusive=False)
     if result:
         return result
 
