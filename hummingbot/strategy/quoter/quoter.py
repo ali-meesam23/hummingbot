@@ -368,8 +368,8 @@ class Quoter(StrategyPyBase):
         # GET ORDER PRICE -->> ADJUSTED FOR SPREAD
         self._current_order_price = current_price*(1+current_spread)
 
-        log_msg = f"{self._counter} Current Bin: {self._current_bin} >> remaining time {round(self._remaining_bin_time,1)} >> Spread: {round(current_spread*100,1)}%"
-        self.logger().info(log_msg)
+        # log_msg = f"{self._counter} Current Bin: {self._current_bin} >> remaining time {round(self._remaining_bin_time,1)} >> Spread: {round(current_spread*100,1)}%"
+        # self.logger().info(log_msg)
 
         ############### SEPARATE COUNTER ###############
         self._counter+=Decimal('1')
