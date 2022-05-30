@@ -70,7 +70,7 @@ class Quoter(StrategyPyBase):
         self._all_markets_ready = False                                 # CONNECTION
         self.intervals = np.linspace(0,int(self._TTC),int(self._GNT)+1) # COUNTER: Bins are linked to the intervals | Splitting Total Duration Equally amoung bins
         
-        self._current_balance = self._market_info.base_balance          # ASSET: Total Current Asset Balance
+        self._current_balance = self._market_info.market.get_balance(self._market_info.base_asset)          # ASSET: Total Current Asset Balance
 
         self._start_time = Decimal(str(time.time()))                    # COUNTER
         
@@ -233,7 +233,10 @@ class Quoter(StrategyPyBase):
             self.log_with_clock(logging.INFO,
                                 f"({market_info.trading_pair}) Limit {order_filled_event.trade_type.name.lower()} order of "
                                 f"{order_filled_event.amount} {market_info.base_asset} filled.")
-            self._current_balance += order_filled_event.amount
+            if self._is_buy:
+                self._current_balance += order_filled_event.amount
+            else:
+                self._current_balance -= order_filled_event.amount
 
     def did_complete_buy_order(self, order_completed_event):
         """
@@ -436,12 +439,16 @@ class Quoter(StrategyPyBase):
         
         # self._market_info.market.get_balance(self._market_info.base_asset)
         # Expected Quantity on ith Bin - Current Quantity
-        expected_balance = self._market_info.base_balance+((self._target_asset_amount-self._market_info.base_balance)/self._GNT*self._current_bin)
-        bin_remaining_quantity = Decimal(abs(Decimal(expected_balance)-Decimal(self._current_balance)))
+        if self._is_buy:
+            expected_balance = self._market_info.base_balance+((self._target_asset_amount-self._market_info.base_balance)/self._GNT*self._current_bin)
+        else:
+            expected_balance = self._market_info.base_balance-((-self._target_asset_amount+self._market_info.base_balance)/self._GNT*self._current_bin)
         
+        bin_remaining_quantity = Decimal(abs(Decimal(expected_balance)-Decimal(self._current_balance)))
         log_msg = f'Remaining Bin Quantity (PRE-ORDER): {bin_remaining_quantity}'
         self.logger().info(log_msg)
         
+        self.logger().info(f"Expected Balance: {expected_balance}")
         log_msg = f'TARGET / CURRENT: {self._target_asset_amount} / {self._current_balance} | BIN: {self._current_bin}'
         self.logger().info(log_msg)
 
@@ -505,5 +512,4 @@ class Quoter(StrategyPyBase):
         return quote_asset_balance >= (amount * Decimal(price)) \
             if self._is_buy \
             else base_asset_balance >= amount
-    
-    
+''
