@@ -71,7 +71,8 @@ class Quoter(StrategyPyBase):
         self.intervals = np.linspace(0,int(self._TTC),int(self._GNT)+1) # COUNTER: Bins are linked to the intervals | Splitting Total Duration Equally amoung bins
         
         self._current_balance = self._market_info.market.get_balance(self._market_info.base_asset)          # ASSET: Total Current Asset Balance
-
+        # self._current_balance = market_info.base_balance
+        self.logger().info(f"Current Balance (init): {self._current_balance}")
         self._start_time = Decimal(str(time.time()))                    # COUNTER
         
         self._last_timestamp = Decimal("0")                             # COUNTER: STARTING POINT
@@ -320,6 +321,8 @@ class Quoter(StrategyPyBase):
         self._last_timestamp = timestamp
 
     def tick(self,timestamp:float):
+        if self._current_balance==0:
+            self._current_balance = self._market_info.market.get_balance(self._market_info.base_asset)
         """Updates every second"""
         ############### TOTAL QUANITYT REMAINING CHECK ###############
         if self._total_quantity_remaining<=0:
@@ -444,11 +447,19 @@ class Quoter(StrategyPyBase):
         else:
             expected_balance = self._market_info.base_balance-((-self._target_asset_amount+self._market_info.base_balance)/self._GNT*self._current_bin)
         
+
+        self.logger().info(f"""
+        Current Bin: {self._current_bin}
+        StartingBalance: {self._market_info.base_balance}
+        Expected Balance: {expected_balance}
+        
+        """)
+
         bin_remaining_quantity = Decimal(abs(Decimal(expected_balance)-Decimal(self._current_balance)))
         log_msg = f'Remaining Bin Quantity (PRE-ORDER): {bin_remaining_quantity}'
         self.logger().info(log_msg)
         
-        self.logger().info(f"Expected Balance: {expected_balance}")
+        # self.logger().info(f"Expected Balance: {expected_balance}")
         log_msg = f'TARGET / CURRENT: {self._target_asset_amount} / {self._current_balance} | BIN: {self._current_bin}'
         self.logger().info(log_msg)
 
