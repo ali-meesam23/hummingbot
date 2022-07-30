@@ -4,14 +4,13 @@ from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
 class AccountInfo(ScriptStrategyBase):
 
     ticker = "BTC-USDT"
-    exchange = "kucoin_testnet"
+    exchange = "binance_perpetual_testnet"
     base,quote = ticker.split("-")
-    markets = {"kucoin_testnet":{"BTC-USDT"}}
+    markets = {"binance_perpetual_testnet":{"BTC-USDT"}}
+    
 
     def on_tick(self):
-        # base_balance = self.connectors[self.exchange].get_balance(self.base)
-        # quote_balance = self.connectors[self.exchange].get_balance(self.quote)
-        # msg = f"Balances: {base_balance}Tkns | ${quote_balance}"
         price = self.connectors[self.exchange].get_mid_price(self.ticker)
-        msg = f"{self.ticker}: ${price}"
+
+        msg = f"\n{self.ticker}: ${price}"
         self.logger().info(f"{msg}")
