@@ -306,11 +306,11 @@ class Quoter(StrategyPyBase):
 
         :param market_info: a market trading pair
         """
-
+        refresh_rate = 30
         ######### REFRSH RATE 30 seconds
         # GET THE LATEST PRICE AND UPDATE WITH THE SPREAD
         # refresh rate >> 5 times per bin or every 5 seconds which ever is bigger
-        if self._counter%Decimal('30')==Decimal("0") or self._counter==Decimal("1") or int(self._remaining_bin_time)==10:
+        if self._counter%Decimal(refresh_rate)==Decimal("0") or self._counter==Decimal("1") or int(self._remaining_bin_time)==10:
             ####################PRICE_UPDATE####################
             self.place_orders_for_market(market_info)
             
