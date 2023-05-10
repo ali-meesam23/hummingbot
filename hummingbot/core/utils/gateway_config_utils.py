@@ -1,8 +1,22 @@
 from copy import deepcopy
-from typing import List, Dict, Any, Optional, Iterable
+from typing import Any, Dict, Iterable, List, Optional
+
 import pandas as pd
 
-native_tokens = {"ethereum": "ETH", "avalanche": "AVAX", "solana": "SOL"}
+native_tokens = {
+    "ethereum": "ETH",
+    "avalanche": "AVAX",
+    "solana": "SOL",
+    "polygon": "MATIC",
+    "harmony": "ONE",
+    "binance-smart-chain": "BNB",
+    "cronos": "CRO",
+    "near": "NEAR",
+    "injective": "INJ",
+    "xdc": "XDC"
+}
+
+SUPPORTED_CHAINS = set(native_tokens.keys())
 
 
 def flatten(items):
@@ -47,6 +61,41 @@ def build_connector_display(connectors: List[Dict[str, Any]]) -> pd.DataFrame:
                 connector_spec["connector"],
                 f"{connector_spec['chain']} - {connector_spec['network']}",
                 connector_spec["wallet_address"],
+            ]
+        ])
+
+    return pd.DataFrame(data=data, columns=columns)
+
+
+def build_list_display(connectors: List[Dict[str, Any]]) -> pd.DataFrame:
+    """
+    Display connector information as a table
+    """
+    columns = ["Exchange", "Chains", "Tier"]
+    data = []
+    for connector_spec in connectors:
+        data.extend([
+            [
+                connector_spec["name"],
+                ', '.join(connector_spec['chains']),
+                connector_spec["tier"],
+            ]
+        ])
+
+    return pd.DataFrame(data=data, columns=columns)
+
+
+def build_connector_tokens_display(connectors: List[Dict[str, Any]]) -> pd.DataFrame:
+    """
+    Display connector and the tokens the balance command will report on
+    """
+    columns = ["Exchange", "Report Token Balances"]
+    data = []
+    for connector_spec in connectors:
+        data.extend([
+            [
+                f"{connector_spec['connector']}_{connector_spec['chain']}_{connector_spec['network']}",
+                connector_spec.get("tokens", ""),
             ]
         ])
 

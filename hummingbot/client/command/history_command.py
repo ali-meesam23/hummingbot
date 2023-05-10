@@ -3,22 +3,12 @@ import threading
 import time
 from datetime import datetime
 from decimal import Decimal
-from typing import (
-    List,
-    Optional,
-    Set,
-    Tuple,
-    TYPE_CHECKING,
-)
+from typing import TYPE_CHECKING, List, Optional, Set, Tuple
 
 import pandas as pd
 
-from hummingbot.client.config.global_config_map import global_config_map
 from hummingbot.client.performance import PerformanceMetrics
-from hummingbot.client.settings import (
-    AllConnectorSettings,
-    MAXIMUM_TRADE_FILLS_DISPLAY_OUTPUT,
-)
+from hummingbot.client.settings import MAXIMUM_TRADE_FILLS_DISPLAY_OUTPUT, AllConnectorSettings
 from hummingbot.client.ui.interface_utils import format_df_for_printout
 from hummingbot.core.utils.async_utils import safe_ensure_future
 from hummingbot.model.trade_fill import TradeFill
@@ -29,7 +19,7 @@ s_decimal_0 = Decimal("0")
 
 
 if TYPE_CHECKING:
-    from hummingbot.client.hummingbot_application import HummingbotApplication
+    from hummingbot.client.hummingbot_application import HummingbotApplication  # noqa: F401
 
 
 def get_timestamp(days_ago: float = 0.) -> float:
@@ -60,8 +50,19 @@ class HistoryCommand:
                 return
             if verbose:
                 self.list_trades(start_time)
-            if self.strategy_name != "celo_arb":
-                safe_ensure_future(self.history_report(start_time, trades, precision))
+            safe_ensure_future(self.history_report(start_time, trades, precision))
+
+    def get_history_trades_json(self,  # type: HummingbotApplication
+                                days: float = 0):
+        if self.strategy_file_name is None:
+            return
+        start_time = get_timestamp(days) if days > 0 else self.init_time
+        with self.trade_fill_db.get_new_session() as session:
+            trades: List[TradeFill] = self._get_trades_from_session(
+                int(start_time * 1e3),
+                session=session,
+                config_file_path=self.strategy_file_name)
+            return list([TradeFill.to_bounty_api_json(t) for t in trades])
 
     async def history_report(self,  # type: HummingbotApplication
                              start_time: float,
@@ -74,7 +75,7 @@ class HistoryCommand:
         return_pcts = []
         for market, symbol in market_info:
             cur_trades = [t for t in trades if t.market == market and t.symbol == symbol]
-            network_timeout = float(global_config_map["other_commands_timeout"].value)
+            network_timeout = float(self.client_config_map.commands_timeout.other_commands_timeout)
             try:
                 cur_balances = await asyncio.wait_for(self.get_current_balances(market), network_timeout)
             except asyncio.TimeoutError:
@@ -96,12 +97,12 @@ class HistoryCommand:
         if market in self.markets and self.markets[market].ready:
             return self.markets[market].get_all_balances()
         elif "Paper" in market:
-            paper_balances = global_config_map["paper_trade_account_balance"].value
+            paper_balances = self.client_config_map.paper_trade.paper_trade_account_balance
             if paper_balances is None:
                 return {}
             return {token: Decimal(str(bal)) for token, bal in paper_balances.items()}
         else:
-            await UserBalances.instance().update_exchange_balance(market)
+            await UserBalances.instance().update_exchange_balance(market, self.client_config_map)
             return UserBalances.instance().all_balances(market)
 
     def report_header(self,  # type: HummingbotApplication
@@ -224,9 +225,6 @@ class HistoryCommand:
                 session=session,
                 number_of_rows=MAXIMUM_TRADE_FILLS_DISPLAY_OUTPUT + 1,
                 config_file_path=self.strategy_file_name)
-            if self.strategy_name == "celo_arb":
-                celo_trades = self.strategy.celo_orders_to_trade_fills()
-                queried_trades = queried_trades + celo_trades
             df: pd.DataFrame = TradeFill.to_pandas(queried_trades)
 
         if len(df) > 0:
@@ -235,7 +233,7 @@ class HistoryCommand:
                 df = df[:MAXIMUM_TRADE_FILLS_DISPLAY_OUTPUT]
                 self.notify(
                     f"\n  Showing last {MAXIMUM_TRADE_FILLS_DISPLAY_OUTPUT} trades in the current session.")
-            df_lines = format_df_for_printout(df).split("\n")
+            df_lines = format_df_for_printout(df, self.client_config_map.tables_format).split("\n")
             lines.extend(["", "  Recent trades:"] +
                          ["    " + line for line in df_lines])
         else:

@@ -1,25 +1,33 @@
-import logging
 import asyncio
+import logging
 from decimal import Decimal
 from functools import lru_cache
+from typing import Callable, Dict, List, Optional, Tuple, cast
+
 import pandas as pd
-from typing import List, Dict, Tuple, Optional, Callable, cast
 
 from hummingbot.client.performance import PerformanceMetrics
 from hummingbot.client.settings import AllConnectorSettings
 from hummingbot.connector.connector_base import ConnectorBase
-from hummingbot.connector.gateway_EVM_AMM import GatewayEVMAMM
-from hummingbot.connector.gateway_price_shim import GatewayPriceShim
+from hummingbot.connector.gateway.amm.gateway_evm_amm import GatewayEVMAMM
+from hummingbot.connector.gateway.gateway_price_shim import GatewayPriceShim
 from hummingbot.core.clock import Clock
 from hummingbot.core.data_type.limit_order import LimitOrder
 from hummingbot.core.data_type.market_order import MarketOrder
 from hummingbot.core.data_type.trade_fee import TokenAmount
-from hummingbot.core.event.events import BuyOrderCompletedEvent, MarketOrderFailureEvent, OrderCancelledEvent, OrderExpiredEvent, OrderType, SellOrderCompletedEvent
+from hummingbot.core.event.events import (
+    BuyOrderCompletedEvent,
+    MarketOrderFailureEvent,
+    OrderCancelledEvent,
+    OrderExpiredEvent,
+    OrderType,
+    SellOrderCompletedEvent,
+)
 from hummingbot.core.rate_oracle.rate_oracle import RateOracle
 from hummingbot.core.utils.async_utils import safe_ensure_future
 from hummingbot.logger import HummingbotLogger
 from hummingbot.strategy.amm_arb.data_types import ArbProposalSide
-from hummingbot.strategy.amm_arb.utils import create_arb_proposals, ArbProposal
+from hummingbot.strategy.amm_arb.utils import ArbProposal, create_arb_proposals
 from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
 from hummingbot.strategy.strategy_py_base import StrategyPyBase
 
@@ -120,6 +128,14 @@ class AmmArbStrategy(StrategyPyBase):
         self._order_id_side_map: Dict[str, ArbProposalSide] = {}
 
     @property
+    def all_markets_ready(self) -> bool:
+        return self._all_markets_ready
+
+    @all_markets_ready.setter
+    def all_markets_ready(self, value: bool):
+        self._all_markets_ready = value
+
+    @property
     def min_profitability(self) -> Decimal:
         return self._min_profitability
 
@@ -146,18 +162,23 @@ class AmmArbStrategy(StrategyPyBase):
     @staticmethod
     @lru_cache(maxsize=10)
     def is_gateway_market(market_info: MarketTradingPairTuple) -> bool:
-        return market_info.market.name in AllConnectorSettings.get_gateway_evm_amm_connector_names()
+        return market_info.market.name in sorted(
+            AllConnectorSettings.get_gateway_amm_connector_names()
+        )
 
     def tick(self, timestamp: float):
         """
         Clock tick entry point, is run every second (on normal tick setting).
         :param timestamp: current tick timestamp
         """
-        if not self._all_markets_ready:
-            self._all_markets_ready = all([market.ready for market in self.active_markets])
-            if not self._all_markets_ready:
-                unready_markets = ', '.join([market.name for market in self.active_markets if market.ready is False])
-                self.logger().warning(f"Markets are not ready ({unready_markets}). Please wait...")
+        if not self.all_markets_ready:
+            self.all_markets_ready = all([market.ready for market in self.active_markets])
+            if not self.all_markets_ready:
+                if int(timestamp) % 10 == 0:  # prevent spamming by logging every 10 secs
+                    unready_markets = [market for market in self.active_markets if market.ready is False]
+                    for market in unready_markets:
+                        msg = ', '.join([k for k, v in market.status_dict.items() if v is False])
+                        self.logger().warning(f"{market.name} not ready: waiting for {msg}.")
                 return
             else:
                 self.logger().info("Markets are ready. Trading started.")
@@ -202,7 +223,7 @@ class AmmArbStrategy(StrategyPyBase):
                                    "\n".join(self.short_proposal_msg(self._all_arb_proposals, False)))
                 self._last_no_arb_reported = self.current_timestamp
             return
-        self.apply_slippage_buffers(profitable_arb_proposals)
+        await self.apply_slippage_buffers(profitable_arb_proposals)
         self.apply_budget_constraint(profitable_arb_proposals)
         await self.execute_arb_proposals(profitable_arb_proposals)
 
@@ -218,7 +239,7 @@ class AmmArbStrategy(StrategyPyBase):
         for gateway in gateway_connectors:
             await gateway.cancel_outdated_orders(self._gateway_transaction_cancel_interval)
 
-    def apply_slippage_buffers(self, arb_proposals: List[ArbProposal]):
+    async def apply_slippage_buffers(self, arb_proposals: List[ArbProposal]):
         """
         Updates arb_proposals by adjusting order price for slipper buffer percentage.
         E.g. if it is a buy order, for an order price of 100 and 1% slipper buffer, the new order price is 101,
@@ -309,6 +330,11 @@ class AmmArbStrategy(StrategyPyBase):
 
                 if not self._concurrent_orders_submission:
                     await arb_side.completed_event.wait()
+                    if arb_side.is_failed:
+                        self.log_with_clock(logging.ERROR,
+                                            f"Order {order_id} seems to have failed in this arbitrage opportunity. "
+                                            f"Dropping Arbitrage Proposal. ")
+                        return
 
             await arb_proposal.wait()
 
@@ -374,7 +400,7 @@ class AmmArbStrategy(StrategyPyBase):
     def quotes_rate_df(self):
         columns = ["Quotes pair", "Rate"]
         quotes_pair: str = f"{self._market_info_2.quote_asset}-{self._market_info_1.quote_asset}"
-        data = [[quotes_pair, PerformanceMetrics.smart_round(self._rate_source.rate(quotes_pair))]]
+        data = [[quotes_pair, PerformanceMetrics.smart_round(self._rate_source.get_pair_rate(quotes_pair))]]
 
         return pd.DataFrame(data=data, columns=columns)
 
@@ -444,7 +470,13 @@ class AmmArbStrategy(StrategyPyBase):
     def set_order_completed(self, order_id: str):
         arb_side: Optional[ArbProposalSide] = self._order_id_side_map.get(order_id)
         if arb_side:
-            arb_side.completed_event.set()
+            arb_side.set_completed()
+
+    def set_order_failed(self, order_id: str):
+        arb_side: Optional[ArbProposalSide] = self._order_id_side_map.get(order_id)
+        if arb_side:
+            arb_side.set_failed()
+            arb_side.set_completed()
 
     def did_complete_buy_order(self, order_completed_event: BuyOrderCompletedEvent):
         self.set_order_completed(order_id=order_completed_event.order_id)
@@ -475,7 +507,7 @@ class AmmArbStrategy(StrategyPyBase):
                                           f"on {market_info.market.name}.")
 
     def did_fail_order(self, order_failed_event: MarketOrderFailureEvent):
-        self.set_order_completed(order_id=order_failed_event.order_id)
+        self.set_order_failed(order_id=order_failed_event.order_id)
 
     def did_cancel_order(self, cancelled_event: OrderCancelledEvent):
         self.set_order_completed(order_id=cancelled_event.order_id)

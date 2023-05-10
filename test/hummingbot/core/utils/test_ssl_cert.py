@@ -3,23 +3,30 @@ Unit tests for hummingbot.core.utils.ssl_cert
 """
 
 import os
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+from hummingbot.client.config.client_config_map import ClientConfigMap
+from hummingbot.client.config.config_helpers import ClientConfigAdapter
 from hummingbot.core.gateway import GatewayPaths
 from hummingbot.core.utils.ssl_cert import (
+    certs_files_exist,
+    create_self_sign_certs,
+    generate_csr,
     generate_private_key,
     generate_public_key,
-    generate_csr,
     sign_csr,
-    create_self_sign_certs,
-    certs_files_exist,
 )
 
 
 class SslCertTest(unittest.TestCase):
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.client_config_map = ClientConfigAdapter(ClientConfigMap())
+
     def test_generate_private_key(self):
         """
         Unit tests for generate_private_key
@@ -95,8 +102,7 @@ class SslCertTest(unittest.TestCase):
             with open(verified_public_key_file_path2, "rb") as verified_public_key2:
                 self.assertNotEqual(verified_public_key, verified_public_key2)
 
-    @patch("hummingbot.core.gateway.get_gateway_container_name", return_value="test_container_abc")
-    def test_create_self_sign_certs(self, _):
+    def test_create_self_sign_certs(self):
         """
         Unit tests for create_self_sign_certs and certs_files_exist
         """
@@ -114,8 +120,8 @@ class SslCertTest(unittest.TestCase):
             )
 
             with patch("hummingbot.core.utils.ssl_cert.get_gateway_paths", return_value=mock_gateway_paths):
-                self.assertEqual(certs_files_exist(), False)
+                self.assertEqual(certs_files_exist(client_config_map=self.client_config_map), False)
 
                 # generate all necessary certs then confirm they exist in the expected place
-                create_self_sign_certs("abc123")
-                self.assertEqual(certs_files_exist(), True)
+                create_self_sign_certs("abc123", cert_path=mock_gateway_paths.local_certs_path.as_posix())
+                self.assertEqual(certs_files_exist(client_config_map=self.client_config_map), True)

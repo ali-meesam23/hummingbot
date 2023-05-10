@@ -1,11 +1,10 @@
 import asyncio
 import logging
-
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Optional, List
+from typing import List, Optional
 
-from hummingbot.core.data_type.trade_fee import TradeFeeBase, TokenAmount
+from hummingbot.core.data_type.trade_fee import TokenAmount, TradeFeeBase
 from hummingbot.core.event.events import OrderType, TradeType
 from hummingbot.core.rate_oracle.rate_oracle import RateOracle
 from hummingbot.core.utils.async_utils import safe_gather
@@ -30,6 +29,7 @@ class ArbProposalSide:
     amount: Decimal
     extra_flat_fees: List[TokenAmount]
     completed_event: asyncio.Event = asyncio.Event()
+    failed_event: asyncio.Event = asyncio.Event()
 
     def __repr__(self):
         side = "buy" if self.is_buy else "sell"
@@ -40,8 +40,15 @@ class ArbProposalSide:
     def is_completed(self) -> bool:
         return self.completed_event.is_set()
 
+    @property
+    def is_failed(self) -> bool:
+        return self.failed_event.is_set()
+
     def set_completed(self):
         self.completed_event.set()
+
+    def set_failed(self):
+        self.failed_event.set()
 
 
 class ArbProposal:
@@ -61,6 +68,10 @@ class ArbProposal:
         self.first_side: ArbProposalSide = first_side
         self.second_side: ArbProposalSide = second_side
 
+    @property
+    def has_failed_orders(self) -> bool:
+        return any([self.first_side.is_failed, self.second_side.is_failed])
+
     def profit_pct(
             self,
             rate_source: Optional[RateOracle] = None,
@@ -79,7 +90,7 @@ class ArbProposal:
         quote_conversion_pair: str = f"{sell_side.market_info.quote_asset}-{buy_side.market_info.quote_asset}"
 
         sell_base_to_buy_base_rate: Decimal = Decimal(1)
-        sell_quote_to_buy_quote_rate: Decimal = rate_source.rate(quote_conversion_pair)
+        sell_quote_to_buy_quote_rate: Decimal = rate_source.get_pair_rate(quote_conversion_pair)
 
         buy_fee_amount: Decimal = s_decimal_0
         sell_fee_amount: Decimal = s_decimal_0
